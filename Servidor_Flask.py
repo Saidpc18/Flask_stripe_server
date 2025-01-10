@@ -24,6 +24,10 @@ def guardar_usuarios(usuarios):
     with open(usuarios_archivo, "w") as f:
         json.dump(usuarios, f, indent=4)
 
+@app.route("/")
+def home():
+    return "¡Bienvenido! La aplicación Flask está corriendo."
+
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
     """Procesa eventos de Stripe enviados al webhook."""
