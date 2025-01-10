@@ -1,17 +1,17 @@
-from flask import Flask, request
-import stripe
+import os
 import json
 from datetime import datetime, timedelta
-import os
+from flask import Flask, request
+import stripe
 
 # Inicializa Flask
 app = Flask(__name__)
 
 # Configura tu clave secreta de Stripe y el webhook secret
-stripe.api_key = "Merfosis22"  # Reemplaza con tu clave secreta real
+stripe.api_key = "sk_test_your_secret_key"  # Reemplaza con tu clave secreta real
 webhook_secret = "whsec_your_webhook_secret"  # Reemplaza con tu webhook secret
 
-# Cargar archivo de usuarios
+# Archivo de usuarios
 usuarios_archivo = "usuarios.json"
 
 def cargar_usuarios():
@@ -54,7 +54,8 @@ def stripe_webhook():
 
     return "OK", 200
 
-# Inicia el servidor
+# Ejecuta el servidor
 if __name__ == "__main__":
-    app.run(port=5000)
-
+    # Obtén el puerto desde la variable de entorno (por defecto usa 5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
