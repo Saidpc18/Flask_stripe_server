@@ -1,1 +1,1 @@
-web: Servidor_Flask.py
+web: python Servidor_Flask.py
