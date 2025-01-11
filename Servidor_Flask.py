@@ -52,10 +52,17 @@ def stripe_webhook():
             # Aquí procesas la renovación de licencia
         else:
             print("El campo client_reference_id no fue enviado o es None.")
+
+    # Manejo del evento `charge.updated`
+    elif event["type"] == "charge.updated":
+        charge = event["data"]["object"]
+        print(f"Información de la transacción actualizada: {charge}")
+
     else:
         print(f"Evento no manejado: {event['type']}")
 
     return "OK", 200
+
 
 # Ejecuta el servidor
 if __name__ == "__main__":
