@@ -3,6 +3,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from flask import Flask, request
+from marshmallow import Schema, fields, ValidationError
 import stripe
 
 # Configura el logger
@@ -43,10 +44,15 @@ def guardar_usuarios(usuarios):
     except Exception as e:
         logger.error(f"Error al guardar usuarios: {e}")
 
+# Esquema para validar eventos de Stripe
+class StripeEventSchema(Schema):
+    type = fields.String(required=True)
+    data = fields.Dict(required=True)
+
 @app.route("/")
 def home():
     logger.info("Endpoint principal '/' accedido.")
-    return "\u00a1Bienvenido! La aplicaci\u00f3n Flask est\u00e1 corriendo."
+    return "¡Bienvenido! La aplicación Flask está corriendo."
 
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
@@ -58,17 +64,26 @@ def stripe_webhook():
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         logger.info(f"Evento recibido: {event['type']}")
     except stripe.error.SignatureVerificationError as e:
-        logger.error(f"Error en la verificaci\u00f3n de la firma del webhook: {e}")
+        logger.error(f"Error en la verificación de la firma del webhook: {e}")
         return "Webhook signature verification failed", 400
     except Exception as e:
         logger.error(f"Error general al procesar el webhook: {e}")
         return "Error al procesar el webhook", 500
 
+    # Validar el evento recibido
+    try:
+        schema = StripeEventSchema()
+        schema.load(event)
+    except ValidationError as e:
+        logger.error(f"Datos del evento inválidos: {e.messages}")
+        return "Datos del evento inválidos", 400
+
+    # Manejar eventos específicos
     try:
         if event["type"] == "checkout.session.completed":
             session = event["data"]["object"]
-            logger.info(f"Contenido de la sesi\u00f3n: {session}")
-            usuario = session.get("client_reference_id")  # ID del usuario en la sesi\u00f3n
+            logger.info(f"Contenido de la sesión: {session}")
+            usuario = session.get("client_reference_id")  # ID del usuario en la sesión
 
             if usuario:
                 logger.info(f"Usuario encontrado: {usuario}")
@@ -78,7 +93,7 @@ def stripe_webhook():
 
         elif event["type"] == "charge.updated":
             charge = event["data"]["object"]
-            logger.info(f"Informaci\u00f3n de la transacci\u00f3n actualizada: {charge}")
+            logger.info(f"Información de la transacción actualizada: {charge}")
 
         elif event["type"] == "payment_intent.succeeded":
             payment_intent = event["data"]["object"]
@@ -90,7 +105,7 @@ def stripe_webhook():
 
         elif event["type"] == "charge.succeeded":
             charge = event["data"]["object"]
-            logger.info(f"Pago completado con \u00e9xito: {charge}")
+            logger.info(f"Pago completado con éxito: {charge}")
 
         else:
             logger.warning(f"Evento no manejado: {event['type']}")
