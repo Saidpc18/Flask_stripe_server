@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Configura tu clave secreta de Stripe y el webhook secret
-stripe.api_key = "Merfosis22"  # Reemplaza con tu clave secreta real
+stripe.api_key = "REDACTED_STRIPE_KEY"  # Reemplaza con tu clave secreta real
 webhook_secret = "REDACTED_STRIPE_WEBHOOK_SECRET"  # Reemplaza con tu webhook secret
 
 # Archivo de usuarios
