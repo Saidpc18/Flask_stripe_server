@@ -39,6 +39,8 @@ def stripe_webhook():
     except stripe.error.SignatureVerificationError as e:
         return "Webhook signature verification failed", 400
 
+    print(f"Evento recibido: {event}")
+
     # Manejo del evento `checkout.session.completed`
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
@@ -63,3 +65,4 @@ if __name__ == "__main__":
     # Obtén el puerto desde la variable de entorno (por defecto usa 5000)
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
