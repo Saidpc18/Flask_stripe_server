@@ -2,6 +2,7 @@ import os
 import json
 import logging
 from datetime import datetime, timedelta
+
 from flask import Flask, request, jsonify
 from marshmallow import Schema, fields, ValidationError
 import stripe
@@ -12,7 +13,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("app.log"),  # Guarda los logs en un archivo
-        logging.StreamHandler()  # También muestra los logs en la consola
+        logging.StreamHandler()          # También muestra los logs en la consola
     ]
 )
 logger = logging.getLogger(__name__)
@@ -20,9 +21,12 @@ logger = logging.getLogger(__name__)
 # Inicializa Flask
 app = Flask(__name__)
 
-# Configura tu clave secreta de Stripe y el webhook secret
-stripe.api_key = "REDACTED_STRIPE_KEY"  # Reemplaza con tu clave secreta real
-webhook_secret = "REDACTED_STRIPE_WEBHOOK_SECRET"  # Reemplaza con tu webhook secret
+# ============================
+# CONFIGURA TU CLAVE SECRETA DE STRIPE
+# (USA TU PROPIA CLAVE "sk_live_..." o "sk_test_...")
+# ============================
+stripe.api_key = "REDACTED_STRIPE_KEY"  # <-- Asegúrate de usar tu propia clave
+webhook_secret = "REDACTED_STRIPE_WEBHOOK_SECRET"  # <-- Asegúrate de usar tu propio webhook secret
 
 # Archivo de usuarios
 usuarios_archivo = "usuarios.json"
@@ -77,6 +81,10 @@ def stripe_webhook():
             if usuario:
                 logger.info(f"Usuario encontrado: {usuario}")
                 # Aquí procesas la renovación de licencia
+                # Por ejemplo:
+                # usuarios = cargar_usuarios()
+                # # Actualizar licencia del usuario
+                # guardar_usuarios(usuarios)
             else:
                 logger.warning("El campo client_reference_id no fue enviado o es None.")
 
@@ -111,36 +119,27 @@ def stripe_webhook():
 
     return "OK", 200
 
-@app.route("/create-checkout-session", methods=["POST"])
+@app.route('/create-checkout-session', methods=['POST'])
 def create_checkout_session():
-    """Crea una sesión de Stripe Checkout."""
     try:
-        data = request.json
-        usuario = data.get("usuario")
-
-        if not usuario:
-            return jsonify({"error": "El usuario no fue proporcionado."}), 400
-
-        # Crear la sesión de Stripe Checkout
+        # ============================
+        # Opción 1: Usar Price ID
+        # ============================
         session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=[{
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {
-                        "name": "Renovación de Licencia",
-                    },
-                    "unit_amount": 5000,  # Precio en centavos (50 USD)
+            payment_method_types=['card'],
+            line_items=[
+                {
+                    'price': 'price_1QfWXBG4Og1KI6OFQcEYBl8m',  # <-- Reemplaza con tu Price ID real
+                    'quantity': 1,
                 },
-                "quantity": 1,
-            }],
-            mode="payment",
-            success_url="http://localhost:5000/success",  # URL después del pago exitoso
-            cancel_url="http://localhost:5000/cancel",  # URL si el pago es cancelado
+            ],
+            mode='payment',
+            success_url='http://localhost:5000/success',  # <-- Ajusta URLs según tu necesidad
+            cancel_url='http://localhost:5000/cancel',
+            # Opcional: Si quieres identificar al usuario
+            # client_reference_id='usuario_ejemplo'
         )
-
-        return jsonify({"url": session.url}), 200
-
+        return jsonify({'url': session.url})
     except Exception as e:
         logger.error(f"Error al crear la sesión de pago: {e}")
         return jsonify({"error": str(e)}), 500
@@ -153,3 +152,4 @@ if __name__ == "__main__":
         app.run(host="0.0.0.0", port=port)
     except Exception as e:
         logger.critical(f"Error al iniciar el servidor: {e}")
+
