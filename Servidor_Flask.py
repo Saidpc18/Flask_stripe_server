@@ -67,7 +67,13 @@ def stripe_webhook():
     elif event["type"] == "customer.created":
         customer = event["data"]["object"]
         print(f"Nuevo cliente creado: {customer}")
-        # Aquí puedes procesar los datos del cliente, como registrar su información.
+
+    # Manejo del evento `charge.succeeded`
+    elif event["type"] == "charge.succeeded":
+        charge = event["data"]["object"]
+        print(f"Pago completado con éxito: {charge}")
+        # Aquí puedes realizar acciones como registrar el cargo en una base de datos,
+        # enviar confirmaciones de pago, etc.
 
     else:
         print(f"Evento no manejado: {event['type']}")
