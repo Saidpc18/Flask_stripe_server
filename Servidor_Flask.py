@@ -45,6 +45,11 @@ def stripe_webhook():
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         usuario = session.get("client_reference_id")  # ID del usuario en la sesión
+
+        if not usuario:
+            print("Advertencia: 'client_reference_id' no está presente en los datos del evento.")
+            return "Error: client_reference_id no definido", 400
+
         usuarios = cargar_usuarios()
 
         if usuario in usuarios:
@@ -65,4 +70,5 @@ if __name__ == "__main__":
     # Obtén el puerto desde la variable de entorno (por defecto usa 5000)
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
