@@ -133,7 +133,7 @@ def create_checkout_session():
                     'quantity': 1,
                 },
             ],
-            mode='payment',
+            mode='subscription',
             success_url='http://localhost:5000/success',  # <-- Ajusta URLs según tu necesidad
             cancel_url='http://localhost:5000/cancel',
             # Opcional: Si quieres identificar al usuario
