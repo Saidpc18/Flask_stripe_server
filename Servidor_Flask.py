@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from datetime import datetime, timedelta
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from marshmallow import Schema, fields, ValidationError
 import stripe
 
@@ -63,23 +63,12 @@ def stripe_webhook():
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         logger.info(f"Evento recibido: {event['type']}")
-    except stripe.error.SignatureVerificationError as e:
-        logger.error(f"Error en la verificación de la firma del webhook: {e}")
-        return "Webhook signature verification failed", 400
-    except Exception as e:
-        logger.error(f"Error general al procesar el webhook: {e}")
-        return "Error al procesar el webhook", 500
 
-    # Validar el evento recibido
-    try:
+        # Validar el evento recibido
         schema = StripeEventSchema()
         schema.load(event)
-    except ValidationError as e:
-        logger.error(f"Datos del evento inválidos: {e.messages}")
-        return "Datos del evento inválidos", 400
 
-    # Manejar eventos específicos
-    try:
+        # Manejar eventos específicos
         if event["type"] == "checkout.session.completed":
             session = event["data"]["object"]
             logger.info(f"Contenido de la sesión: {session}")
@@ -110,11 +99,51 @@ def stripe_webhook():
         else:
             logger.warning(f"Evento no manejado: {event['type']}")
 
+    except ValidationError as e:
+        logger.error(f"Datos del evento inválidos: {e.messages}")
+        return "Datos del evento inválidos", 400
+    except stripe.error.SignatureVerificationError as e:
+        logger.error(f"Error en la verificación de la firma del webhook: {e}")
+        return "Webhook signature verification failed", 400
     except Exception as e:
-        logger.error(f"Error al manejar el evento: {e}")
-        return "Error al manejar el evento", 500
+        logger.error(f"Error general al procesar el webhook: {e}")
+        return "Error al procesar el webhook", 500
 
     return "OK", 200
+
+@app.route("/create-checkout-session", methods=["POST"])
+def create_checkout_session():
+    """Crea una sesión de Stripe Checkout."""
+    try:
+        data = request.json
+        usuario = data.get("usuario")
+
+        if not usuario:
+            return jsonify({"error": "El usuario no fue proporcionado."}), 400
+
+        # Crear la sesión de Stripe Checkout
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {
+                        "name": "Renovación de Licencia",
+                    },
+                    "unit_amount": 5000,  # Precio en centavos (50 USD)
+                },
+                "quantity": 1,
+            }],
+            mode="payment",
+            success_url="http://localhost:5000/success",  # URL después del pago exitoso
+            cancel_url="http://localhost:5000/cancel",  # URL si el pago es cancelado
+        )
+
+        return jsonify({"url": session.url}), 200
+
+    except Exception as e:
+        logger.error(f"Error al crear la sesión de pago: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # Ejecuta el servidor
 if __name__ == "__main__":
