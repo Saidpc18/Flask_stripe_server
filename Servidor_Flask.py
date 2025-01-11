@@ -58,6 +58,12 @@ def stripe_webhook():
         charge = event["data"]["object"]
         print(f"Información de la transacción actualizada: {charge}")
 
+    # Manejo del evento `payment_intent.succeeded`
+    elif event["type"] == "payment_intent.succeeded":
+        payment_intent = event["data"]["object"]
+        print(f"Pago exitoso procesado: {payment_intent}")
+        # Aquí puedes agregar lógica adicional para manejar el pago exitoso.
+
     else:
         print(f"Evento no manejado: {event['type']}")
 
@@ -69,5 +75,3 @@ if __name__ == "__main__":
     # Obtén el puerto desde la variable de entorno (por defecto usa 5000)
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-
