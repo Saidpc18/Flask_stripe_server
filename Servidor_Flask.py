@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 # Configura tu clave secreta de Stripe y el webhook secret
 stripe.api_key = "Merfosis22"  # Reemplaza con tu clave secreta real
-webhook_secret = "whsec_8cebd49390f65f43a051b1bd0d86dad809df237674cda13dcbb0f7c6ffd67442"  # Reemplaza con tu webhook secret
+webhook_secret = "whsec_4QAnSKkUNDYAoOSfmURtHNelKARrQw5k"  # Reemplaza con tu webhook secret
 
 # Archivo de usuarios
 usuarios_archivo = "usuarios.json"
