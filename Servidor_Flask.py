@@ -135,7 +135,16 @@ def stripe_webhook():
 @app.route('/create-checkout-session', methods=['POST'])
 def create_checkout_session():
     try:
-        data = request.json  # Supongamos que envías el usuario desde el cliente
+        # Verifica que el cliente haya enviado el campo 'user'
+        data = request.json
+        if not data or 'user' not in data:
+            logger.error("El campo 'user' es requerido pero no fue enviado.")
+            return jsonify({"error": "El campo 'user' es requerido para iniciar el proceso de pago."}), 400
+
+        # Extrae el usuario del cuerpo de la solicitud
+        user = data['user']
+
+        # Crea la sesión de Stripe Checkout
         session = stripe.checkout.Session.create(
             payment_method_types=['card'],
             line_items=[
@@ -147,9 +156,11 @@ def create_checkout_session():
             mode='subscription',
             success_url='http://localhost:5000/success',
             cancel_url='http://localhost:5000/cancel',
-            client_reference_id=data['user'],  # Vincula el pago al usuario
+            client_reference_id=user,  # Vincula el pago al usuario
         )
+        logger.info(f"Sesión de pago creada correctamente para el usuario: {user}")
         return jsonify({'url': session.url})
+
     except Exception as e:
         logger.error(f"Error al crear la sesión de pago: {e}")
         return jsonify({"error": str(e)}), 500
