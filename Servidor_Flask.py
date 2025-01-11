@@ -36,32 +36,24 @@ def stripe_webhook():
 
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+        print(f"Evento recibido: {event['type']}")
     except stripe.error.SignatureVerificationError as e:
+        print("Error en la verificación de la firma del webhook:", e)
         return "Webhook signature verification failed", 400
-
-    print(f"Evento recibido: {event}")
 
     # Manejo del evento `checkout.session.completed`
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
+        print(f"Contenido de la sesión: {session}")
         usuario = session.get("client_reference_id")  # ID del usuario en la sesión
 
-        if not usuario:
-            print("Advertencia: 'client_reference_id' no está presente en los datos del evento.")
-            return "Error: client_reference_id no definido", 400
-
-        usuarios = cargar_usuarios()
-
-        if usuario in usuarios:
-            # Renueva la licencia por un año desde la fecha actual
-            ahora = datetime.now()
-            nueva_fecha = ahora + timedelta(days=365)
-            usuarios[usuario]["license_expiration"] = nueva_fecha.strftime("%Y-%m-%d")
-            guardar_usuarios(usuarios)
-
-            print(f"Licencia renovada para el usuario: {usuario}")
+        if usuario:
+            print(f"Usuario encontrado: {usuario}")
+            # Aquí procesas la renovación de licencia
         else:
-            print(f"Usuario no encontrado: {usuario}")
+            print("El campo client_reference_id no fue enviado o es None.")
+    else:
+        print(f"Evento no manejado: {event['type']}")
 
     return "OK", 200
 
