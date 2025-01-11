@@ -23,7 +23,6 @@ app = Flask(__name__)
 
 # ============================
 # CONFIGURA TU CLAVE SECRETA DE STRIPE
-# (USA TU PROPIA CLAVE "sk_live_..." o "sk_test_...")
 # ============================
 stripe.api_key = "REDACTED_STRIPE_KEY"  # <-- Asegúrate de usar tu propia clave
 webhook_secret = "REDACTED_STRIPE_WEBHOOK_SECRET"  # <-- Asegúrate de usar tu propio webhook secret
@@ -31,6 +30,16 @@ webhook_secret = "REDACTED_STRIPE_WEBHOOK_SECRET"  # <-- Asegúrate de usar tu p
 # Archivo de usuarios
 usuarios_archivo = "usuarios.json"
 
+# ============================
+# Clase para validar eventos de Stripe
+# ============================
+class StripeEventSchema(Schema):
+    type = fields.String(required=True)
+    data = fields.Dict(required=True)
+
+# ============================
+# Funciones de usuarios y licencias
+# ============================
 def cargar_usuarios():
     try:
         if os.path.exists(usuarios_archivo):
@@ -48,16 +57,36 @@ def guardar_usuarios(usuarios):
     except Exception as e:
         logger.error(f"Error al guardar usuarios: {e}")
 
-# Esquema para validar eventos de Stripe
-class StripeEventSchema(Schema):
-    type = fields.String(required=True)
-    data = fields.Dict(required=True)
+def licencia_activa(usuario):
+    """
+    Verifica si la licencia de un usuario está activa.
+    """
+    usuarios = cargar_usuarios()
+    if usuario not in usuarios:
+        return False  # Usuario no encontrado
+    licencia = usuarios[usuario].get("license_expiration")
+    if not licencia:
+        return False  # Licencia no configurada
+    return datetime.strptime(licencia, "%Y-%m-%d") > datetime.now()
 
-@app.route("/")
-def home():
-    logger.info("Endpoint principal '/' accedido.")
-    return "¡Bienvenido! La aplicación Flask está corriendo."
+def renovar_licencia(usuario):
+    """
+    Renueva la licencia del usuario por un año.
+    """
+    usuarios = cargar_usuarios()
+    if usuario not in usuarios:
+        return False  # Usuario no encontrado
 
+    ahora = datetime.now()
+    nueva_fecha = ahora + timedelta(days=365)  # Extiende la licencia un año más
+
+    usuarios[usuario]["license_expiration"] = nueva_fecha.strftime("%Y-%m-%d")
+    guardar_usuarios(usuarios)
+    return True
+
+# ============================
+# Webhook de Stripe
+# ============================
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
     """Procesa eventos de Stripe enviados al webhook."""
@@ -80,32 +109,13 @@ def stripe_webhook():
 
             if usuario:
                 logger.info(f"Usuario encontrado: {usuario}")
-                # Aquí procesas la renovación de licencia
-                # Por ejemplo:
-                # usuarios = cargar_usuarios()
-                # # Actualizar licencia del usuario
-                # guardar_usuarios(usuarios)
+                # Renovar licencia para el usuario
+                if renovar_licencia(usuario):
+                    logger.info(f"Licencia renovada para el usuario: {usuario}")
+                else:
+                    logger.warning(f"Usuario no encontrado: {usuario}")
             else:
                 logger.warning("El campo client_reference_id no fue enviado o es None.")
-
-        elif event["type"] == "charge.updated":
-            charge = event["data"]["object"]
-            logger.info(f"Información de la transacción actualizada: {charge}")
-
-        elif event["type"] == "payment_intent.succeeded":
-            payment_intent = event["data"]["object"]
-            logger.info(f"Pago exitoso procesado: {payment_intent}")
-
-        elif event["type"] == "customer.created":
-            customer = event["data"]["object"]
-            logger.info(f"Nuevo cliente creado: {customer}")
-
-        elif event["type"] == "charge.succeeded":
-            charge = event["data"]["object"]
-            logger.info(f"Pago completado con éxito: {charge}")
-
-        else:
-            logger.warning(f"Evento no manejado: {event['type']}")
 
     except ValidationError as e:
         logger.error(f"Datos del evento inválidos: {e.messages}")
@@ -119,12 +129,13 @@ def stripe_webhook():
 
     return "OK", 200
 
+# ============================
+# Endpoint para crear sesión de pago
+# ============================
 @app.route('/create-checkout-session', methods=['POST'])
 def create_checkout_session():
     try:
-        # ============================
-        # Opción 1: Usar Price ID
-        # ============================
+        data = request.json  # Supongamos que envías el usuario desde el cliente
         session = stripe.checkout.Session.create(
             payment_method_types=['card'],
             line_items=[
@@ -134,17 +145,28 @@ def create_checkout_session():
                 },
             ],
             mode='subscription',
-            success_url='http://localhost:5000/success',  # <-- Ajusta URLs según tu necesidad
+            success_url='http://localhost:5000/success',
             cancel_url='http://localhost:5000/cancel',
-            # Opcional: Si quieres identificar al usuario
-            # client_reference_id='usuario_ejemplo'
+            client_reference_id=data['user'],  # Vincula el pago al usuario
         )
         return jsonify({'url': session.url})
     except Exception as e:
         logger.error(f"Error al crear la sesión de pago: {e}")
         return jsonify({"error": str(e)}), 500
 
-# Ejecuta el servidor
+# ============================
+# Endpoint para funcionalidades principales
+# ============================
+@app.route("/funcion-principal", methods=["GET"])
+def funcion_principal():
+    usuario = request.args.get("user")  # Supongamos que el cliente envía el usuario en la URL
+    if not licencia_activa(usuario):
+        return jsonify({"error": "Licencia expirada. Renueva para continuar usando la aplicación."}), 403
+    return jsonify({"message": "Acceso permitido a la función principal."})
+
+# ============================
+# Punto de entrada
+# ============================
 if __name__ == "__main__":
     try:
         port = int(os.environ.get("PORT", 5000))
@@ -152,4 +174,3 @@ if __name__ == "__main__":
         app.run(host="0.0.0.0", port=port)
     except Exception as e:
         logger.critical(f"Error al iniciar el servidor: {e}")
-
