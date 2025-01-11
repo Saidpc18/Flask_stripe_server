@@ -1,8 +1,20 @@
 import os
 import json
+import logging
 from datetime import datetime, timedelta
 from flask import Flask, request
 import stripe
+
+# Configura el logger
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("app.log"),  # Guarda los logs en un archivo
+        logging.StreamHandler()  # También muestra los logs en la consola
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Inicializa Flask
 app = Flask(__name__)
@@ -15,18 +27,26 @@ webhook_secret = "whsec_8cebd49390f65f43a051b1bd0d86dad809df237674cda13dcbb0f7c6
 usuarios_archivo = "usuarios.json"
 
 def cargar_usuarios():
-    if os.path.exists(usuarios_archivo):
-        with open(usuarios_archivo, "r") as f:
-            return json.load(f)
-    return {}
+    try:
+        if os.path.exists(usuarios_archivo):
+            with open(usuarios_archivo, "r") as f:
+                return json.load(f)
+        return {}
+    except Exception as e:
+        logger.error(f"Error al cargar usuarios: {e}")
+        return {}
 
 def guardar_usuarios(usuarios):
-    with open(usuarios_archivo, "w") as f:
-        json.dump(usuarios, f, indent=4)
+    try:
+        with open(usuarios_archivo, "w") as f:
+            json.dump(usuarios, f, indent=4)
+    except Exception as e:
+        logger.error(f"Error al guardar usuarios: {e}")
 
 @app.route("/")
 def home():
-    return "¡Bienvenido! La aplicación Flask está corriendo."
+    logger.info("Endpoint principal '/' accedido.")
+    return "\u00a1Bienvenido! La aplicaci\u00f3n Flask est\u00e1 corriendo."
 
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
@@ -36,53 +56,56 @@ def stripe_webhook():
 
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-        print(f"Evento recibido: {event['type']}")
+        logger.info(f"Evento recibido: {event['type']}")
     except stripe.error.SignatureVerificationError as e:
-        print("Error en la verificación de la firma del webhook:", e)
+        logger.error(f"Error en la verificaci\u00f3n de la firma del webhook: {e}")
         return "Webhook signature verification failed", 400
+    except Exception as e:
+        logger.error(f"Error general al procesar el webhook: {e}")
+        return "Error al procesar el webhook", 500
 
-    # Manejo del evento `checkout.session.completed`
-    if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
-        print(f"Contenido de la sesión: {session}")
-        usuario = session.get("client_reference_id")  # ID del usuario en la sesión
+    try:
+        if event["type"] == "checkout.session.completed":
+            session = event["data"]["object"]
+            logger.info(f"Contenido de la sesi\u00f3n: {session}")
+            usuario = session.get("client_reference_id")  # ID del usuario en la sesi\u00f3n
 
-        if usuario:
-            print(f"Usuario encontrado: {usuario}")
-            # Aquí procesas la renovación de licencia
+            if usuario:
+                logger.info(f"Usuario encontrado: {usuario}")
+                # Aquí procesas la renovación de licencia
+            else:
+                logger.warning("El campo client_reference_id no fue enviado o es None.")
+
+        elif event["type"] == "charge.updated":
+            charge = event["data"]["object"]
+            logger.info(f"Informaci\u00f3n de la transacci\u00f3n actualizada: {charge}")
+
+        elif event["type"] == "payment_intent.succeeded":
+            payment_intent = event["data"]["object"]
+            logger.info(f"Pago exitoso procesado: {payment_intent}")
+
+        elif event["type"] == "customer.created":
+            customer = event["data"]["object"]
+            logger.info(f"Nuevo cliente creado: {customer}")
+
+        elif event["type"] == "charge.succeeded":
+            charge = event["data"]["object"]
+            logger.info(f"Pago completado con \u00e9xito: {charge}")
+
         else:
-            print("El campo client_reference_id no fue enviado o es None.")
+            logger.warning(f"Evento no manejado: {event['type']}")
 
-    # Manejo del evento `charge.updated`
-    elif event["type"] == "charge.updated":
-        charge = event["data"]["object"]
-        print(f"Información de la transacción actualizada: {charge}")
-
-    # Manejo del evento `payment_intent.succeeded`
-    elif event["type"] == "payment_intent.succeeded":
-        payment_intent = event["data"]["object"]
-        print(f"Pago exitoso procesado: {payment_intent}")
-
-    # Manejo del evento `customer.created`
-    elif event["type"] == "customer.created":
-        customer = event["data"]["object"]
-        print(f"Nuevo cliente creado: {customer}")
-
-    # Manejo del evento `charge.succeeded`
-    elif event["type"] == "charge.succeeded":
-        charge = event["data"]["object"]
-        print(f"Pago completado con éxito: {charge}")
-        # Aquí puedes realizar acciones como registrar el cargo en una base de datos,
-        # enviar confirmaciones de pago, etc.
-
-    else:
-        print(f"Evento no manejado: {event['type']}")
+    except Exception as e:
+        logger.error(f"Error al manejar el evento: {e}")
+        return "Error al manejar el evento", 500
 
     return "OK", 200
 
-
 # Ejecuta el servidor
 if __name__ == "__main__":
-    # Obtén el puerto desde la variable de entorno (por defecto usa 5000)
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    try:
+        port = int(os.environ.get("PORT", 5000))
+        logger.info(f"Iniciando servidor en el puerto {port}.")
+        app.run(host="0.0.0.0", port=port)
+    except Exception as e:
+        logger.critical(f"Error al iniciar el servidor: {e}")
