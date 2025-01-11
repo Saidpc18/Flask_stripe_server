@@ -81,33 +81,6 @@ valores_alfabeticos = {
     "X": 7, "Y": 8, "Z": 9
 }
 
-# ============================
-#   FUNCIONES DE USUARIOS
-# ============================
-def guardar_usuarios():
-    with open(usuarios_archivo, 'w') as f:
-        json.dump(usuarios, f)
-
-def crear_cuenta(usuario, password):
-    if usuario in usuarios:
-        return False
-    hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-    # Añadimos un secuencial si vamos a generar VIN
-    usuarios[usuario] = {
-        "password": hashed_pw.decode('utf-8'),
-        "secuencial": 1,  # Para pos.15-17
-        "vins": []
-    }
-    guardar_usuarios()
-    return True
-
-def autenticar_usuario(usuario, password):
-    if usuario not in usuarios:
-        return None
-    stored = usuarios[usuario]["password"].encode('utf-8')
-    if bcrypt.checkpw(password.encode('utf-8'), stored):
-        return usuario
-    return None
 
 # ============================
 #   FUNCIONES DE USUARIOS
@@ -116,18 +89,22 @@ def guardar_usuarios():
     with open(usuarios_archivo, 'w') as f:
         json.dump(usuarios, f)
 
+
 def crear_cuenta(usuario, password):
+    # Evita duplicar usuario
     if usuario in usuarios:
         return False
+
     hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
     usuarios[usuario] = {
         "password": hashed_pw.decode('utf-8'),
         "secuencial": 1,  # Para pos.15-17
         "vins": [],
-        "license_expiration": None  # Nueva entrada para manejar licencias
+        "license_expiration": None  # Campo para manejar licencias
     }
     guardar_usuarios()
     return True
+
 
 def autenticar_usuario(usuario, password):
     if usuario not in usuarios:
@@ -136,6 +113,7 @@ def autenticar_usuario(usuario, password):
     if bcrypt.checkpw(password.encode('utf-8'), stored):
         return usuario
     return None
+
 
 def renovar_licencia(usuario):
     """Renueva la licencia del usuario por un año."""
@@ -159,6 +137,7 @@ def renovar_licencia(usuario):
     usuarios[usuario]["license_expiration"] = nueva_fecha.strftime("%Y-%m-%d")
     guardar_usuarios()
 
+
 # ============================
 #   CÁLCULO DE VIN (POSICIÓN 9)
 # ============================
@@ -171,13 +150,16 @@ def convertir_a_valor_numerico(cadena):
             valores.append(valores_alfabeticos.get(ch.upper(), 0))
     return valores
 
+
 def multiplicar_por_factores(valores, factores):
     return [v * f for v, f in zip(valores, factores)]
+
 
 def obtener_posicion_9(val_mult):
     total = sum(val_mult)
     resto = total % 11
     return "X" if resto == 10 else str(resto)
+
 
 def obtener_posicion_15_16_17(usuario):
     seq = usuarios[usuario]["secuencial"]
@@ -186,25 +168,27 @@ def obtener_posicion_15_16_17(usuario):
     guardar_usuarios()
     return num
 
+
 def calcular_vin(wmi, c4, c5, c6, c7, c8, c10, c11, sec):
     """
-    Aplica factores para 17 posiciones, con pos.9 = 0 temporal,
-    pos.10=8, pos.11=3 a modo de ejemplo.
+    Aplica factores para 17 posiciones. Se usa 0 temporal en pos.9
+    y se usan 8 y 3 en las posiciones 10 y 11 como ejemplo dentro
+    de la suma (no afecta el vin_str final, que sí usa c10 y c11).
     """
     # Construimos la secuencia numérica
     valores = (
-        convertir_a_valor_numerico(wmi) +
-        convertir_a_valor_numerico(c4) +
-        convertir_a_valor_numerico(c5) +
-        convertir_a_valor_numerico(c6) +
-        convertir_a_valor_numerico(c7) +
-        convertir_a_valor_numerico(c8) +
-        convertir_a_valor_numerico(c10) +
-        convertir_a_valor_numerico(c11) +
-        [0]    # pos.9
-        + [8]  # pos.10 ejemplo
-        + [3]  # pos.11 ejemplo
-        + convertir_a_valor_numerico(sec)
+            convertir_a_valor_numerico(wmi) +
+            convertir_a_valor_numerico(c4) +
+            convertir_a_valor_numerico(c5) +
+            convertir_a_valor_numerico(c6) +
+            convertir_a_valor_numerico(c7) +
+            convertir_a_valor_numerico(c8) +
+            convertir_a_valor_numerico(c10) +
+            convertir_a_valor_numerico(c11) +
+            [0]  # pos.9, placeholder temporal
+            + [8]  # pos.10 (ejemplo)
+            + [3]  # pos.11 (ejemplo)
+            + convertir_a_valor_numerico(sec)
     )
     # Factores
     factores = [8, 7, 6, 5, 4, 3, 2, 10,
@@ -213,23 +197,26 @@ def calcular_vin(wmi, c4, c5, c6, c7, c8, c10, c11, sec):
     mult = multiplicar_por_factores(valores, factores)
     return obtener_posicion_9(mult)
 
+
 def vin_ya_existe(vin_data, usuario):
     for reg in usuarios[usuario]["vins"]:
         if (
-            reg["c4"] == vin_data["c4"] and
-            reg["c5"] == vin_data["c5"] and
-            reg["c6"] == vin_data["c6"] and
-            reg["c7"] == vin_data["c7"] and
-            reg["c8"] == vin_data["c8"] and
-            reg["c10"] == vin_data["c10"] and
-            reg["c11"] == vin_data["c11"]
+                reg["c4"] == vin_data["c4"] and
+                reg["c5"] == vin_data["c5"] and
+                reg["c6"] == vin_data["c6"] and
+                reg["c7"] == vin_data["c7"] and
+                reg["c8"] == vin_data["c8"] and
+                reg["c10"] == vin_data["c10"] and
+                reg["c11"] == vin_data["c11"]
         ):
             return True
     return False
 
+
 def guardar_vin(vin_data, usuario):
     usuarios[usuario]["vins"].append(vin_data)
     guardar_usuarios()
+
 
 # ============================
 #   CLASE PRINCIPAL - TKINTER
@@ -272,7 +259,6 @@ class VINBuilderApp:
 
         self.mostrar_ventana_inicio()
 
-
     def iniciar_pago(self):
         """Conecta con el servidor Flask para iniciar el proceso de pago."""
         if not self.usuario_actual:
@@ -286,16 +272,19 @@ class VINBuilderApp:
 
             if response.status_code == 200:
                 data = response.json()
-                # Abrir la URL de Stripe en el navegador
-                webbrowser.open(data["url"])
-                messagebox.showinfo("Pago Iniciado", "Se ha abierto la página de pago en tu navegador.")
+                if "url" in data:
+                    # Abrir la URL de Stripe en el navegador
+                    webbrowser.open(data["url"])
+                    messagebox.showinfo("Pago Iniciado", "Se ha abierto la página de pago en tu navegador.")
+                else:
+                    messagebox.showerror("Error", "No se recibió una URL válida del servidor.")
             else:
-                messagebox.showerror("Error", "No se pudo iniciar el proceso de pago.")
-        except Exception as e:
+                error_msg = response.json().get("error", "Error desconocido")
+                messagebox.showerror("Error", f"No se pudo iniciar el proceso de pago: {error_msg}")
+        except requests.exceptions.RequestException as e:
             messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
-
-
-
+        except Exception as e:
+            messagebox.showerror("Error", f"Ocurrió un error inesperado: {e}")
 
     # --------------------------
     # VENTANAS DE INICIO / LOGIN
@@ -398,7 +387,7 @@ class VINBuilderApp:
         self.result_label = ttk.Label(self.main_frame, text="VIN/NIV: ")
         self.result_label.pack(pady=5)
 
-        # Botón para renovar licencia (nuevo)
+        # Botón para renovar licencia (pago)
         ttk.Button(self.main_frame, text="Renovar Licencia", command=self.iniciar_pago).pack(pady=10)
 
         # Botón para editar catálogos
@@ -408,7 +397,6 @@ class VINBuilderApp:
         ttk.Button(self.main_frame, text="Ver VINs Generados", command=self.ventana_lista_vins).pack(pady=5)
 
         ttk.Button(self.main_frame, text="Cerrar Sesión", command=self.cerrar_sesion).pack(pady=10)
-
 
     def crear_optionmenus(self):
         """Crea los OptionMenus según los catálogos."""
@@ -562,6 +550,7 @@ class VINBuilderApp:
             c7, c8, c10, c11 = reg["c7"], reg["c8"], reg["c10"], reg["c11"]
             sec = reg["secuencial"]
 
+            # Recalcular pos.9 para mostrar VIN completo
             pos9 = calcular_vin(self.var_wmi.get().upper(), c4, c5, c6, c7, c8, c10, c11, sec)
             vin_r = f"{self.var_wmi.get().upper()}{c5}{c4}{c6}{c7}{c8}{pos9}{c10}{c11}083{sec}"
 
@@ -569,7 +558,7 @@ class VINBuilderApp:
             texto_vins += f"  - c4: {c4}, c5: {c5}, c6: {c6}, c7: {c7}\n"
             texto_vins += f"  - c8: {c8}, c10: {c10}, c11: {c11}\n"
             texto_vins += f"  - secuencial: {sec}\n"
-            texto_vins += "-"*40 + "\n"
+            texto_vins += "-" * 40 + "\n"
 
         ttk.Label(scroll_frame, text=texto_vins, justify=tk.LEFT).pack(pady=10)
         canvas.pack(side="left", fill="both", expand=True)
@@ -688,6 +677,7 @@ class VINBuilderApp:
     def limpiar_main_frame(self):
         for w in self.main_frame.winfo_children():
             w.destroy()
+
 
 # ============================
 #  PUNTO DE ENTRADA
