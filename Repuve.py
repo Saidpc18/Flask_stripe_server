@@ -136,11 +136,11 @@ def guardar_usuarios():
     with open(usuarios_archivo, 'w') as f:
         json.dump(usuarios, f)
 
-def crear_cuenta(usuario, password):
-    if usuario in usuarios:
+def crear_cuenta(user, password):
+    if user in usuarios:
         return False
     hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-    usuarios[usuario] = {
+    usuarios[user] = {
         "password": hashed_pw.decode('utf-8'),
         "secuencial": 1,
         "vins": [],
@@ -149,20 +149,20 @@ def crear_cuenta(usuario, password):
     guardar_usuarios()
     return True
 
-def autenticar_usuario(usuario, password):
-    if usuario not in usuarios:
+def autenticar_usuario(user, password):
+    if user not in usuarios:
         return None
-    stored = usuarios[usuario]["password"].encode('utf-8')
+    stored = usuarios[user]["password"].encode('utf-8')
     if bcrypt.checkpw(password.encode('utf-8'), stored):
-        return usuario
+        return user
     return None
 
-def renovar_licencia(usuario):
+def renovar_licencia(user):
     from datetime import datetime, timedelta
-    if usuario not in usuarios:
+    if user not in usuarios:
         return
     ahora = datetime.now()
-    expiracion = usuarios[usuario].get("license_expiration")
+    expiracion = usuarios[user].get("license_expiration")
     if expiracion:
         expiracion = datetime.strptime(expiracion, "%Y-%m-%d")
         if expiracion > ahora:
@@ -171,7 +171,7 @@ def renovar_licencia(usuario):
             nueva_fecha = ahora + timedelta(days=365)
     else:
         nueva_fecha = ahora + timedelta(days=365)
-    usuarios[usuario]["license_expiration"] = nueva_fecha.strftime("%Y-%m-%d")
+    usuarios[user]["license_expiration"] = nueva_fecha.strftime("%Y-%m-%d")
     guardar_usuarios()
 
 # ============================
