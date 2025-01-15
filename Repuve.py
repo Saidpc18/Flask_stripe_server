@@ -41,11 +41,10 @@ posicion_4 = {
     "JM Remolque Cuello Ganzo Cama Alta": "D",
     "JM Semirremolque Tipo Gondola": "C",
     "JM Semirremolque Tipo Jaula Granelera": "B"
-
 }
 posicion_5 = {
     "5' X 10' A 14' Pies": "1",
-    "5´ X 15´ A 20´Pies	": "2",
+    "5´ X 15´ A 20´Pies\t": "2",
     "6´ X 10´ A  14´ Pies": "3",
     "6´ X 15´ A  20´ Pies": "4",
     "7´ X 10´ A  15´  Pies": "5",
@@ -55,10 +54,9 @@ posicion_5 = {
     "8´ X 22´ A  27´ Pies": "9",
     "8.5´ X 16´ A  21´ Pies": "A",
     "8.5´ X 22´ A 27´ Pies": "B"
-
 }
 posicion_6 = {
-    "1 Eje, Rin 13, 5 birlos, 800, Suspensión de balancin":	"A",
+    "1 Eje, Rin 13, 5 birlos, 800, Suspensión de balancin": "A",
     "1 Eje, Rin 15, 5 birlos, 1.500, Suspensión de balancin": "C",
     "1 Eje, Rin 16, 8 birlos, 3.000, Suspensión de balancin": "E",
     "2 Ejes, Rin 15, 5 birlos, 3.000, Suspensión de balancin": "F",
@@ -71,8 +69,6 @@ posicion_6 = {
     "3 Ejes, rin 24.5, 10 birlos, 40.000, Suspensión de aire": "U",
     "3 Ejes, rin 24.5, 24 m3, 30.000, Suspensión de aire": "V",
     "3 Ejes, rin 24.5, 30 m3, 45.000, Suspensión de aire": "Z"
-
-
 }
 posicion_7 = {
     "300 A  500": "9",
@@ -80,12 +76,11 @@ posicion_7 = {
     "701 A 900": "7",
     "901 A 1100": "6",
     "1101 A 1300": "5",
-    "1301 A 1500" : "4",
+    "1301 A 1500": "4",
     "1501 A 1700": "3",
     "1701 A 1900": "2",
     "1901 A 2100": "1",
     "2101 A 2300": "A"
-
 }
 posicion_8 = {
     "Sin Frenos": "9",
@@ -99,16 +94,9 @@ posicion_10 = {
     "2026": "T",
     "2027": "V",
     "2028": "W"
-
 }
 posicion_11 = {
     "Ex Hacienda la Honda, Zacatecas, México": "A"
-}
-
-posicion_12 = {
-    "12": "0",
-    "13": "9",
-    "14": "8"
 }
 
 catalogos = {
@@ -304,6 +292,41 @@ class VINBuilderApp:
             messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
         except Exception as e:
             messagebox.showerror("Error", f"Ocurrió un error inesperado: {e}")
+
+    def verificar_licencia(self):
+        """
+        Llama al endpoint /funcion-principal en el servidor Flask
+        para verificar si la licencia está activa.
+        Retorna True si está activa, False si no.
+        """
+        if not self.usuario_actual:
+            messagebox.showerror("Error", "No hay usuario activo.")
+            return False
+
+        try:
+            # Ajusta la URL si tu servidor no está en localhost o no está en 5000
+            response = requests.get(
+                "http://localhost:5000/funcion-principal",
+                params={"user": self.usuario_actual}
+            )
+            data = response.json()
+            if response.status_code == 403:
+                # El servidor responde { "error": "Licencia expirada..." }
+                messagebox.showerror("Suscripción requerida", data["error"])
+                return False
+            elif "error" in data:
+                # Por si el endpoint devolvió algo distinto
+                messagebox.showerror("Suscripción requerida", data["error"])
+                return False
+            # Si llegamos aquí, status 200 y no hay error => licencia OK
+            return True
+
+        except requests.exceptions.RequestException as e:
+            messagebox.showerror("Error", f"No se pudo verificar la licencia: {e}")
+            return False
+        except Exception as e:
+            messagebox.showerror("Error", f"Ocurrió un error al verificar la licencia: {e}")
+            return False
 
     # --------------------------
     #  VENTANAS DE INICIO / LOGIN
@@ -512,6 +535,15 @@ class VINBuilderApp:
         return ""
 
     def generar_vin(self):
+        """
+        Antes de generar el VIN, verificamos la licencia en el servidor.
+        Si la licencia está expirada o no existe, se mostrará error y se abortará.
+        """
+        # 1) Verificar licencia
+        if not self.verificar_licencia():
+            return
+
+        # 2) Lógica normal de generar VIN
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
@@ -541,7 +573,6 @@ class VINBuilderApp:
             "c11": c11, "secuencial": sec
         }
 
-        # Si quieres impedir que se repitan características, descomenta:
         # if vin_ya_existe(vin_data, self.usuario_actual):
         #     messagebox.showerror("Error", "Ya existe un VIN con estas características.")
         #     return
@@ -556,6 +587,13 @@ class VINBuilderApp:
         messagebox.showinfo("VIN Generado", f"VIN/NIV: {vin_str}")
 
     def ventana_lista_vins(self):
+        """
+        Antes de ver la lista de VINs, verificamos la licencia.
+        Si la licencia está expirada o no existe, se mostrará error y se abortará.
+        """
+        if not self.verificar_licencia():
+            return
+
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
