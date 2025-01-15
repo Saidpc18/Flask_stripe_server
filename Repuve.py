@@ -211,7 +211,7 @@ def calcular_vin(wmi, c4, c5, c6, c7, c8, c10, c11, sec):
         convertir_a_valor_numerico(c8) +
         convertir_a_valor_numerico(c10) +
         convertir_a_valor_numerico(c11) +
-        [0] + [8] + [3] +
+        [0] + [9] + [8] +
         convertir_a_valor_numerico(sec)
     )
     factores = [8, 7, 6, 5, 4, 3, 2, 10,
