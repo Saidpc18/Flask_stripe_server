@@ -285,7 +285,7 @@ class VINBuilderApp:
             return
         try:
             server_url = "http://localhost:5000/create-checkout-session"
-            response = requests.post(server_url, json={"usuario": self.usuario_actual})
+            response = requests.post(server_url, json={"user": self.usuario_actual})
 
             if response.status_code == 200:
                 data = response.json()
