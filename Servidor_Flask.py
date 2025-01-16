@@ -42,6 +42,12 @@ logger = logging.getLogger(__name__)
 # ============================
 app = Flask(__name__)
 
+# Configuración condicional basada en una variable de entorno
+if os.getenv("FLASK_ENV") == "production":
+    app.config["DEBUG"] = False
+else:
+    app.config["DEBUG"] = True
+
 # ============================
 # CONFIGURA STRIPE
 # ============================
