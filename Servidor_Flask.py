@@ -247,6 +247,11 @@ def listar_vins(username):
         })
     return vin_list
 
+
+@app.route("/")
+def home():
+    return "Bienvenido a la API de VIN Builder"
+
 # ============================
 #  WEBHOOK DE STRIPE
 # ============================
