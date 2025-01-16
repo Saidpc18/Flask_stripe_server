@@ -13,15 +13,17 @@ from psycopg2.extras import Json
 # ============================
 # CONFIGURACIÓN DE LA BASE DE DATOS
 # ============================
+# Se sustituyen valores fijos por variables de entorno (con defaults)
 DB_CONFIG = {
-    "dbname": "vin_builder",
-    "user": "postgres",
-    "password": "merlot_5",  # Cambia esto por la contraseña de tu usuario postgres
-    "host": "localhost",
-    "port": 5432
+    "dbname": os.getenv("DB_NAME", "vin_builder"),
+    "user": os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASSWORD", "merlot_5"),
+    "host": os.getenv("DB_HOST", "localhost"),
+    "port": int(os.getenv("DB_PORT", 5432))
 }
 
 def conectar_bd():
+    """Crea una conexión a la base de datos usando DB_CONFIG."""
     return psycopg2.connect(**DB_CONFIG)
 
 # ============================
@@ -42,7 +44,7 @@ logger = logging.getLogger(__name__)
 # ============================
 app = Flask(__name__)
 
-# Configuración condicional basada en una variable de entorno
+# Configuración del modo de depuración (DEBUG) según el entorno
 if os.getenv("FLASK_ENV") == "production":
     app.config["DEBUG"] = False
 else:
@@ -51,8 +53,10 @@ else:
 # ============================
 # CONFIGURA STRIPE
 # ============================
-stripe.api_key = "REDACTED_STRIPE_KEY"
-webhook_secret = "REDACTED_STRIPE_WEBHOOK_SECRET"
+# En producción, es recomendable no poner tus claves directamente en el código.
+# Usa variables de entorno STRIPE_API_KEY y STRIPE_WEBHOOK_SECRET, con defaults si gustas.
+stripe.api_key = os.getenv("STRIPE_API_KEY", "REDACTED_STRIPE_KEY")
+webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "REDACTED_STRIPE_WEBHOOK_SECRET")
 
 # ============================
 #  CLASE PARA VALIDAR EVENTOS DE STRIPE
@@ -60,7 +64,6 @@ webhook_secret = "REDACTED_STRIPE_WEBHOOK_SECRET"
 class StripeEventSchema(Schema):
     type = fields.String(required=True)
     data = fields.Dict(required=True)
-
 
 # =================================================
 #  FUNCIONES PARA OBTENER Y ADMINISTRAR USUARIOS
@@ -92,7 +95,7 @@ def cargar_usuarios():
 
 def actualizar_usuario(usuario, datos):
     """
-    Actualiza un usuario existente en la tabla 'usuarios' con los datos proporcionados:
+    Actualiza un usuario existente en la tabla 'usuarios'.
     datos = { "password": str, "license_expiration": str, "secuencial": int }
     """
     conn = conectar_bd()
@@ -121,11 +124,11 @@ def licencia_activa(usuario):
     Verifica si la licencia de un usuario está activa en la base de datos.
     Devuelve True/False.
     """
-    usuarios = cargar_usuarios()
-    if usuario not in usuarios:
+    todos = cargar_usuarios()
+    if usuario not in todos:
         return False  # Usuario no encontrado
 
-    licencia = usuarios[usuario].get("license_expiration")
+    licencia = todos[usuario].get("license_expiration")
     if not licencia:
         return False  # Licencia no configurada
 
@@ -133,7 +136,7 @@ def licencia_activa(usuario):
 
 def renovar_licencia(usuario):
     """
-    Renueva la licencia del usuario por un año directamente en la base de datos.
+    Renueva la licencia del usuario por un año en la base de datos.
     Si el usuario no existe, devuelve False.
     Si se renueva, devuelve True.
     """
@@ -167,7 +170,7 @@ def renovar_licencia(usuario):
 # ===================================================
 def obtener_user_id(username):
     """
-    Retorna el id (entero) del usuario 'username' en la tabla 'usuarios'.
+    Retorna el id (entero) del usuario 'username' en 'usuarios'.
     Devuelve None si no existe.
     """
     conn = conectar_bd()
@@ -176,15 +179,12 @@ def obtener_user_id(username):
     row = cur.fetchone()
     cur.close()
     conn.close()
-
-    if row:
-        return row[0]
-    return None
+    return row[0] if row else None
 
 def guardar_vin(username, vin_data):
     """
     Inserta un nuevo VIN en la tabla 'vins', usando el owner_id del usuario.
-    vin_data debe tener c4, c5, c6, c7, c8, c10, c11, secuencial
+    vin_data: { c4, c5, c6, c7, c8, c10, c11, secuencial }
     """
     owner_id = obtener_user_id(username)
     if not owner_id:
@@ -213,8 +213,8 @@ def guardar_vin(username, vin_data):
 
 def listar_vins(username):
     """
-    Retorna una lista de diccionarios con todos los VINs de un usuario.
-    Cada dict contiene c4, c5, c6, c7, c8, c10, c11, secuencial, created_at, etc.
+    Retorna todos los VINs de un usuario como lista de diccionarios.
+    Cada dict: c4, c5, c6, c7, c8, c10, c11, secuencial, created_at
     """
     owner_id = obtener_user_id(username)
     if not owner_id:
@@ -301,7 +301,7 @@ def create_checkout_session():
 
         user = data['user']
 
-        session = stripe.checkout.Session.create(
+        session_obj = stripe.checkout.Session.create(
             payment_method_types=['card'],
             line_items=[
                 {
@@ -315,7 +315,7 @@ def create_checkout_session():
             client_reference_id=user,
         )
         logger.info(f"Sesión de pago creada correctamente para el usuario: {user}")
-        return jsonify({'url': session.url})
+        return jsonify({'url': session_obj.url})
 
     except Exception as e:
         logger.error(f"Error al crear la sesión de pago: {e}")
@@ -350,11 +350,10 @@ def guardar_vin_endpoint():
     if not username or not vin_data:
         return jsonify({"error": "Faltan 'user' o 'vin_data'"}), 400
 
-    # Opcional: Verificar licencia antes de permitir guardar VIN
+    # (Opcional) Verificar licencia antes de permitir guardar VIN
     if not licencia_activa(username):
         return jsonify({"error": "Licencia expirada. Renueva para continuar usando la aplicación."}), 403
 
-    # Guardar el VIN
     exito = guardar_vin(username, vin_data)
     if not exito:
         return jsonify({"error": "No se pudo guardar el VIN (usuario no existe)."}), 404
@@ -381,8 +380,9 @@ def ver_vins():
 # ============================
 if __name__ == "__main__":
     try:
+        # Leer el puerto de la variable de entorno (Render/Heroku/etc.)
         port = int(os.environ.get("PORT", 5000))
-        logger.info(f"Iniciando servidor en el puerto {port}.")
+        logger.info(f"Iniciando servidor en el puerto {port} (DEBUG={app.config['DEBUG']})")
         app.run(host="0.0.0.0", port=port)
     except Exception as e:
         logger.critical(f"Error al iniciar el servidor: {e}")
