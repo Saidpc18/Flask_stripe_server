@@ -15,10 +15,10 @@ from psycopg2.extras import Json
 # ============================
 # Se sustituyen valores fijos por variables de entorno (con defaults)
 DB_CONFIG = {
-    "dbname": os.getenv("DB_NAME", "vin_builder"),
-    "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", "merlot_5"),
-    "host": os.getenv("DB_HOST", "localhost"),
+    "dbname": os.getenv("DB_NAME", "vindatabase"),
+    "user": os.getenv("DB_USER", "vindatabase_owner"),
+    "password": os.getenv("DB_PASSWORD", "vindatabase_owner"),
+    "host": os.getenv("DB_HOST", "ep-solitary-frost-a5hss4fj.us-east-2.aws.neon.tech"),
     "port": int(os.getenv("DB_PORT", 5432))
 }
 
