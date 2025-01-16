@@ -18,3 +18,6 @@ session = stripe.checkout.Session.create(
     success_url='https://flask-stripe-server.onrender.com/success?session_id={CHECKOUT_SESSION_ID}',
     cancel_url='https://flask-stripe-server.onrender.com/cancel',
 )
+
+# Imprime la URL de la sesión de Checkout
+print(session.url)
