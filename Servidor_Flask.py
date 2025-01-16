@@ -1,5 +1,4 @@
 import os
-import json
 import logging
 from datetime import datetime, timedelta
 
@@ -8,22 +7,20 @@ from marshmallow import Schema, fields, ValidationError
 import stripe
 
 import psycopg2
-from psycopg2.extras import Json
+
 
 # ============================
 # CONFIGURACIÓN DE LA BASE DE DATOS
 # ============================
-# Usa las variables de entorno para producción.
-# Puedes definir valores por defecto para desarrollo, pero asegúrate de usar valores seguros en producción.
-
+# Lee las variables de entorno para producción.
+# Ajusta los valores por defecto para tu entorno de desarrollo.
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME", "vindatabase"),
     "user": os.getenv("DB_USER", "vindatabase_owner"),
-    "password": os.getenv("DB_PASSWORD", "vindatabase_owner"),  # Ajusta en producción (no uses 'owner')
+    "password": os.getenv("DB_PASSWORD", "vindatabase_owner"),  # Cambia en producción para mayor seguridad
     "host": os.getenv("DB_HOST", "ep-solitary-frost-a5hss4fj.us-east-2.aws.neon.tech"),
     "port": int(os.getenv("DB_PORT", 5432))
 }
-
 
 def conectar_bd():
     """Crea una conexión a la base de datos usando DB_CONFIG."""
@@ -33,7 +30,7 @@ def conectar_bd():
 # ============================
 # LOGGING
 # ============================
-# Ajusta el nivel de logs según el entorno. En producción, puedes usar WARNING para reducir la salida de logs.
+# Ajusta el nivel de logs según el entorno. En producción podrías usar WARNING para reducir la salida.
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -44,12 +41,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # ============================
 # INICIALIZA FLASK
 # ============================
 app = Flask(__name__)
 
-# Configuración del modo de depuración (DEBUG) según el entorno
+# Configura DEBUG en base a FLASK_ENV
 if os.getenv("FLASK_ENV") == "production":
     app.config["DEBUG"] = False
 else:
@@ -59,10 +57,11 @@ else:
 # ============================
 # CONFIGURA STRIPE
 # ============================
-# En producción, es mejor usar variables de entorno para STRIPE_API_KEY y STRIPE_WEBHOOK_SECRET.
-# Si no existen, tomará estos valores por defecto.
-stripe.api_key = os.getenv("STRIPE_API_KEY", "sk_live_51QfUyj...")
-webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_4QAnSKkUNDY...")
+# En producción, usa variables de entorno para STRIPE_API_KEY y STRIPE_WEBHOOK_SECRET.
+# Si no existen, se usarán valores por defecto.
+stripe.api_key = os.getenv("STRIPE_API_KEY", "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")
+webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_4QAnSKkUNDYAoOSfmURtHNelKARrQw5k")
+
 
 # ============================
 #  CLASE PARA VALIDAR EVENTOS DE STRIPE
@@ -77,8 +76,15 @@ class StripeEventSchema(Schema):
 # =================================================
 def cargar_usuarios():
     """
-    Carga todos los usuarios de la tabla 'usuarios' y los
-    devuelve como un dict { username: {...}, ... } con la info de cada usuario.
+    Carga todos los usuarios de la tabla 'usuarios' y los devuelve como un dict:
+        {
+          username: {
+            "password": ...,
+            "license_expiration": ...,
+            "secuencial": ...
+          },
+          ...
+        }
     """
     conn = conectar_bd()
     cur = conn.cursor()
@@ -101,7 +107,11 @@ def cargar_usuarios():
 def actualizar_usuario(usuario, datos):
     """
     Actualiza un usuario en la tabla 'usuarios'.
-    datos = { "password": str, "license_expiration": str, "secuencial": int }
+    datos = {
+      "password": str,
+      "license_expiration": str,
+      "secuencial": int
+    }
     """
     conn = conectar_bd()
     cur = conn.cursor()
@@ -127,24 +137,22 @@ def actualizar_usuario(usuario, datos):
 
 def licencia_activa(usuario):
     """
-    Verifica si la licencia de un usuario está activa en la BD.
-    Retorna True/False.
+    Verifica si la licencia de un usuario está activa. Retorna True/False.
     """
     todos = cargar_usuarios()
     if usuario not in todos:
-        return False  # Usuario no existe
+        return False  # El usuario no existe
 
     licencia = todos[usuario].get("license_expiration")
     if not licencia:
-        return False  # No tiene fecha de licencia
+        return False
 
     return datetime.strptime(licencia, "%Y-%m-%d") > datetime.now()
 
 
 def renovar_licencia(usuario):
     """
-    Renueva la licencia del usuario por un año.
-    Retorna True si se renueva con éxito, False si el usuario no existe.
+    Renueva la licencia del usuario por un año. Retorna True si se renueva con éxito.
     """
     conn = conectar_bd()
     cur = conn.cursor()
@@ -175,8 +183,7 @@ def renovar_licencia(usuario):
 # ===================================================
 def obtener_user_id(username):
     """
-    Devuelve el id (int) de la tabla 'usuarios' para el username dado,
-    o None si no existe.
+    Retorna el ID (int) del usuario en la tabla 'usuarios', o None si no existe.
     """
     conn = conectar_bd()
     cur = conn.cursor()
@@ -189,7 +196,7 @@ def obtener_user_id(username):
 
 def guardar_vin(username, vin_data):
     """
-    Inserta un nuevo VIN en la tabla 'vins'. Retorna False si el usuario no existe.
+    Inserta un nuevo VIN en 'vins'. Retorna False si el usuario no existe.
     vin_data: { c4, c5, c6, c7, c8, c10, c11, secuencial }
     """
     owner_id = obtener_user_id(username)
@@ -246,7 +253,7 @@ def listar_vins(username):
 
     vin_list = []
     for row in rows:
-        (c4, c5, c6, c7, c8, c10, c11, sec, created_at) = row
+        c4, c5, c6, c7, c8, c10, c11, sec, created_at = row
         vin_list.append({
             "c4": c4,
             "c5": c5,
@@ -278,6 +285,7 @@ def stripe_webhook():
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         logger.info(f"Evento recibido: {event['type']}")
 
+        # Validar la estructura del evento
         schema = StripeEventSchema()
         schema.load(event)
 
@@ -291,7 +299,7 @@ def stripe_webhook():
                 if renovar_licencia(usuario):
                     logger.info(f"Licencia renovada para el usuario: {usuario}")
                 else:
-                    logger.warning(f"Usuario no encontrado en BD: {usuario}")
+                    logger.warning(f"Usuario no encontrado en la BD: {usuario}")
             else:
                 logger.warning("El campo client_reference_id no fue enviado o es None.")
 
@@ -313,6 +321,10 @@ def stripe_webhook():
 # ============================
 @app.route('/create-checkout-session', methods=['POST'])
 def create_checkout_session():
+    """
+    Crea una sesión de pago de Stripe y devuelve la URL de Checkout.
+    Espera un JSON con {"user": "nombre_usuario"}.
+    """
     try:
         data = request.json
         if not data or 'user' not in data:
@@ -321,7 +333,7 @@ def create_checkout_session():
 
         user = data['user']
 
-        # Cambia localhost a tu dominio en producción
+        # Cambia localhost a tu dominio en producción o usa variables de entorno
         success_url = os.getenv("SUCCESS_URL", "http://localhost:5000/success")
         cancel_url = os.getenv("CANCEL_URL", "http://localhost:5000/cancel")
 
