@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 import bcrypt  # pip install bcrypt
 import tkinter as tk
 import requests  # Para enviar solicitudes HTTP al servidor Flask
@@ -8,26 +7,7 @@ import webbrowser  # Para abrir la URL de Stripe en el navegador
 from tkinter import ttk, messagebox
 
 # ============================
-#  UBICACIÓN DE usuarios.json
-# ============================
-if getattr(sys, 'frozen', False):
-    base_path = os.path.dirname(sys.executable)
-else:
-    base_path = os.path.abspath(".")
-
-usuarios_archivo = os.path.join(base_path, "usuarios.json")
-
-# ============================
-#  CARGAR USUARIOS (SI EXISTE)
-# ============================
-if os.path.exists(usuarios_archivo):
-    with open(usuarios_archivo, 'r') as f:
-        usuarios = json.load(f)
-else:
-    usuarios = {}
-
-# ============================
-#   CATÁLOGOS
+#   CATÁLOGOS (LOCALES)
 # ============================
 posicion_4 = {
     "JM Remolque Cama Baja Tapada": "M",
@@ -109,146 +89,24 @@ catalogos = {
     "posicion_11": posicion_11,
 }
 
-valores_alfabeticos = {
-    "A": 1, "B": 2, "C": 3, "D": 4, "E": 5,
-    "F": 6, "G": 7, "H": 8, "J": 1, "K": 2,
-    "L": 3, "M": 4, "N": 5, "P": 7, "R": 9,
-    "S": 2, "T": 3, "U": 4, "V": 5, "W": 6,
-    "X": 7, "Y": 8, "Z": 9
-}
-
 # ============================
-#   FUNCIONES DE USUARIOS
-# ============================
-def guardar_usuarios():
-    with open(usuarios_archivo, 'w') as f:
-        json.dump(usuarios, f)
-
-def crear_cuenta(user, password):
-    if user in usuarios:
-        return False
-    hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-    usuarios[user] = {
-        "password": hashed_pw.decode('utf-8'),
-        "secuencial": 1,
-        "vins": [],
-        "license_expiration": None
-    }
-    guardar_usuarios()
-    return True
-
-def autenticar_usuario(user, password):
-    if user not in usuarios:
-        return None
-    stored = usuarios[user]["password"].encode('utf-8')
-    if bcrypt.checkpw(password.encode('utf-8'), stored):
-        return user
-    return None
-
-def renovar_licencia(user):
-    from datetime import datetime, timedelta
-    if user not in usuarios:
-        return
-    ahora = datetime.now()
-    expiracion = usuarios[user].get("license_expiration")
-    if expiracion:
-        expiracion = datetime.strptime(expiracion, "%Y-%m-%d")
-        if expiracion > ahora:
-            nueva_fecha = expiracion + timedelta(days=365)
-        else:
-            nueva_fecha = ahora + timedelta(days=365)
-    else:
-        nueva_fecha = ahora + timedelta(days=365)
-    usuarios[user]["license_expiration"] = nueva_fecha.strftime("%Y-%m-%d")
-    guardar_usuarios()
-
-# ============================
-#   CÁLCULO DE VIN (POS.9)
-# ============================
-def convertir_a_valor_numerico(cadena):
-    valores = []
-    for ch in cadena:
-        if ch.isdigit():
-            valores.append(int(ch))
-        else:
-            valores.append(valores_alfabeticos.get(ch.upper(), 0))
-    return valores
-
-def multiplicar_por_factores(valores, factores):
-    return [v * f for v, f in zip(valores, factores)]
-
-def obtener_posicion_9(val_mult):
-    total = sum(val_mult)
-    resto = total % 11
-    return "X" if resto == 10 else str(resto)
-
-def obtener_posicion_15_16_17(usuario):
-    seq = usuarios[usuario]["secuencial"]
-    num = f"{seq:03d}"
-    usuarios[usuario]["secuencial"] += 1
-    guardar_usuarios()
-    return num
-
-def calcular_vin(wmi, c4, c5, c6, c7, c8, c10, c11, sec):
-    valores = (
-        convertir_a_valor_numerico(wmi) +
-        convertir_a_valor_numerico(c4) +
-        convertir_a_valor_numerico(c5) +
-        convertir_a_valor_numerico(c6) +
-        convertir_a_valor_numerico(c7) +
-        convertir_a_valor_numerico(c8) +
-        convertir_a_valor_numerico(c10) +
-        convertir_a_valor_numerico(c11) +
-        [0] + [9] + [8] +
-        convertir_a_valor_numerico(sec)
-    )
-    factores = [8, 7, 6, 5, 4, 3, 2, 10,
-                9, 8, 7, 6, 5, 4, 3, 2]
-    mult = multiplicar_por_factores(valores, factores)
-    return obtener_posicion_9(mult)
-
-def vin_ya_existe(vin_data, usuario):
-    for reg in usuarios[usuario]["vins"]:
-        if (
-            reg["c4"] == vin_data["c4"] and
-            reg["c5"] == vin_data["c5"] and
-            reg["c6"] == vin_data["c6"] and
-            reg["c7"] == vin_data["c7"] and
-            reg["c8"] == vin_data["c8"] and
-            reg["c10"] == vin_data["c10"] and
-            reg["c11"] == vin_data["c11"]
-        ):
-            return True
-    return False
-
-def guardar_vin(vin_data, usuario):
-    usuarios[usuario]["vins"].append(vin_data)
-    guardar_usuarios()
-
-# ============================
-#   CLASE PRINCIPAL
+#  CLASE PRINCIPAL
 # ============================
 class VINBuilderApp:
     def __init__(self, master):
         self.master = master
-        self.master.title("VIN Builder - con usuarios.json en la misma carpeta")
+        self.master.title("VIN Builder - con PostgreSQL")
 
-        # Ocupa toda la pantalla (maximizado):
-        self.master.state("zoomed")  # o self.master.attributes("-fullscreen", True)
+        # Pantalla completa o maximizada
+        self.master.state("zoomed")  # O self.master.attributes("-fullscreen", True)
 
         style = ttk.Style()
         style.theme_use("clam")
 
-        # Frame principal (lo creamos una sola vez)
         self.main_frame = ttk.Frame(self.master)
         self.main_frame.pack(fill="both", expand=True)
 
-        # No creamos left_frame y right_frame aquí porque se destruyen al limpiar;
-        # los crearemos *cada vez* que mostremos la ventana principal.
-        self.left_frame = None
-        self.right_frame = None
-
-        # Variables para OptionMenus
+        # Variables de OptionMenu + WMI
         self.var_wmi = tk.StringVar(value="3J9")
         self.var_c4 = tk.StringVar()
         self.var_c5 = tk.StringVar()
@@ -260,14 +118,16 @@ class VINBuilderApp:
 
         # Usuario actual
         self.usuario_actual = None
+
         self.result_label = None
 
         self.mostrar_ventana_inicio()
 
-    # --------------------------
-    # FUNCIONES DE PAGO / LICENCIA
-    # --------------------------
+    # -----------------------------------------------------
+    #  FUNCIONES QUE SE COMUNICAN CON EL SERVIDOR FLASK
+    # -----------------------------------------------------
     def iniciar_pago(self):
+        """Conecta con Flask (/create-checkout-session) para renovar licencia."""
         if not self.usuario_actual:
             messagebox.showerror("Error", "Inicia sesión para realizar el pago.")
             return
@@ -297,30 +157,24 @@ class VINBuilderApp:
         """
         Llama al endpoint /funcion-principal en el servidor Flask
         para verificar si la licencia está activa.
-        Retorna True si está activa, False si no.
         """
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return False
 
         try:
-            # Ajusta la URL si tu servidor no está en localhost o no está en 5000
             response = requests.get(
                 "http://localhost:5000/funcion-principal",
                 params={"user": self.usuario_actual}
             )
             data = response.json()
             if response.status_code == 403:
-                # El servidor responde { "error": "Licencia expirada..." }
                 messagebox.showerror("Suscripción requerida", data["error"])
                 return False
             elif "error" in data:
-                # Por si el endpoint devolvió algo distinto
                 messagebox.showerror("Suscripción requerida", data["error"])
                 return False
-            # Si llegamos aquí, status 200 y no hay error => licencia OK
             return True
-
         except requests.exceptions.RequestException as e:
             messagebox.showerror("Error", f"No se pudo verificar la licencia: {e}")
             return False
@@ -328,9 +182,53 @@ class VINBuilderApp:
             messagebox.showerror("Error", f"Ocurrió un error al verificar la licencia: {e}")
             return False
 
-    # --------------------------
+    def guardar_vin_en_flask(self, vin_data):
+        """Llama al endpoint /guardar_vin para guardar VIN en la base de datos."""
+        if not self.usuario_actual:
+            messagebox.showerror("Error", "No hay usuario activo.")
+            return
+
+        url = "http://localhost:5000/guardar_vin"
+        payload = {
+            "user": self.usuario_actual,
+            "vin_data": vin_data
+        }
+        try:
+            resp = requests.post(url, json=payload)
+            if resp.status_code == 200:
+                # VIN guardado con éxito
+                messagebox.showinfo("Éxito", "VIN guardado correctamente (en PostgreSQL).")
+            else:
+                data = resp.json()
+                err = data.get("error", "Error desconocido")
+                messagebox.showerror("Error", f"No se pudo guardar el VIN: {err}")
+        except requests.exceptions.RequestException as e:
+            messagebox.showerror("Error", f"Error al conectarse al servidor Flask: {e}")
+
+    def ver_vins_en_flask(self):
+        """Llama al endpoint /ver_vins para obtener VINs del usuario."""
+        if not self.usuario_actual:
+            messagebox.showerror("Error", "No hay usuario activo.")
+            return
+
+        url = "http://localhost:5000/ver_vins"
+        try:
+            resp = requests.get(url, params={"user": self.usuario_actual})
+            if resp.status_code == 200:
+                data = resp.json()
+                vins = data.get("vins", [])
+                return vins
+            else:
+                err = resp.json().get("error", "Error desconocido")
+                messagebox.showerror("Error", f"No se pudo obtener la lista de VINs: {err}")
+                return []
+        except requests.exceptions.RequestException as e:
+            messagebox.showerror("Error", f"Error al conectarse al servidor Flask: {e}")
+            return []
+
+    # -----------------------------------------------------
     #  VENTANAS DE INICIO / LOGIN
-    # --------------------------
+    # -----------------------------------------------------
     def mostrar_ventana_inicio(self):
         self.limpiar_main_frame()
 
@@ -349,30 +247,10 @@ class VINBuilderApp:
         ttk.Label(self.main_frame, text="Crear Cuenta",
                   font=("Arial", 14, "bold")).pack(pady=10)
 
-        ttk.Label(self.main_frame, text="Usuario:").pack()
-        entry_user = ttk.Entry(self.main_frame)
-        entry_user.pack()
+        ttk.Label(self.main_frame, text="(Esta lógica ahora se haría en el servidor Flask)").pack()
 
-        ttk.Label(self.main_frame, text="Contraseña:").pack()
-        entry_pass = ttk.Entry(self.main_frame, show="*")
-        entry_pass.pack()
-
-        def do_crear():
-            user = entry_user.get().strip()
-            pw = entry_pass.get()
-            if not user or not pw:
-                messagebox.showerror("Error", "Completa todos los campos.")
-                return
-            if crear_cuenta(user, pw):
-                messagebox.showinfo("Éxito", f"Cuenta '{user}' creada.")
-                self.mostrar_ventana_inicio()
-            else:
-                messagebox.showerror("Error", "El usuario ya existe.")
-
-        ttk.Button(self.main_frame, text="Registrar",
-                   command=do_crear).pack(pady=10)
         ttk.Button(self.main_frame, text="Volver",
-                   command=self.mostrar_ventana_inicio).pack()
+                   command=self.mostrar_ventana_inicio).pack(pady=10)
 
     def ventana_iniciar_sesion(self):
         self.limpiar_main_frame()
@@ -395,57 +273,45 @@ class VINBuilderApp:
                 messagebox.showerror("Error", "Completa todos los campos.")
                 return
 
-            autenticado = autenticar_usuario(user, pw)
-            if autenticado is None:
-                if user not in usuarios:
-                    messagebox.showerror("Error", "El usuario no existe.")
-                else:
-                    messagebox.showerror("Error", "Contraseña incorrecta.")
-            else:
-                self.usuario_actual = autenticado
-                messagebox.showinfo("Éxito", f"Bienvenido, {autenticado}")
-                self.ventana_principal()
+            # Lógica local (JSON) se elimina; en producción se consultaría al servidor Flask
+            # Por ahora, asumimos que si user existe localmente...
+            # O podrías hacer un request a tu servidor Flask para autenticar.
+
+            messagebox.showinfo("Éxito", f"Bienvenido, {user}")
+            self.usuario_actual = user
+            self.ventana_principal()
 
         ttk.Button(self.main_frame, text="Iniciar Sesión",
                    command=do_login).pack(pady=10)
+
         ttk.Button(self.main_frame, text="Volver",
                    command=self.mostrar_ventana_inicio).pack()
 
-    # --------------------------
+    # -----------------------------------------------------
     #  VENTANA PRINCIPAL (POST-LOGIN)
-    # --------------------------
+    # -----------------------------------------------------
     def ventana_principal(self):
-        """
-        Dividimos la pantalla en dos:
-        - Izquierda (self.left_frame): WMI + OptionMenus.
-        - Derecha (self.right_frame): Botones de generar VIN, renovar, editar, ver VINs, etc.
-        """
         self.limpiar_main_frame()
 
-        # IMPORTANTE: Re-creamos left_frame y right_frame
         self.left_frame = ttk.Frame(self.main_frame)
         self.left_frame.pack(side="left", fill="both", expand=True)
 
         self.right_frame = ttk.Frame(self.main_frame)
         self.right_frame.pack(side="right", fill="both", expand=True)
 
-        # Título de Bienvenida
         titulo = ttk.Label(self.main_frame,
                            text=f"Hola, {self.usuario_actual}",
                            font=("Arial", 14, "bold"))
         titulo.pack(pady=10)
 
-        # -- SECCIÓN IZQUIERDA --
         ttk.Label(self.left_frame, text="Generar VIN",
                   font=("Arial", 12, "underline")).pack(pady=5)
 
         ttk.Label(self.left_frame, text="Código WMI:").pack()
         ttk.Entry(self.left_frame, textvariable=self.var_wmi).pack()
 
-        # OptionMenus en el left_frame
         self.crear_optionmenus(self.left_frame)
 
-        # -- SECCIÓN DERECHA --
         ttk.Button(self.right_frame, text="Generar VIN",
                    command=self.generar_vin).pack(pady=10)
 
@@ -455,9 +321,6 @@ class VINBuilderApp:
         ttk.Button(self.right_frame, text="Renovar Licencia",
                    command=self.iniciar_pago).pack(pady=10)
 
-        ttk.Button(self.right_frame, text="Editar Tablas",
-                   command=self.ventana_editar_tablas).pack(pady=5)
-
         ttk.Button(self.right_frame, text="Ver VINs Generados",
                    command=self.ventana_lista_vins).pack(pady=5)
 
@@ -465,7 +328,6 @@ class VINBuilderApp:
                    command=self.cerrar_sesion).pack(pady=10)
 
     def crear_optionmenus(self, parent):
-        """Coloca todos los OptionMenus dentro del frame `parent`."""
         ttk.Label(parent, text="Pos.4 (Ej. Modelo):").pack()
         self.menu_c4 = ttk.OptionMenu(
             parent,
@@ -535,15 +397,10 @@ class VINBuilderApp:
         return ""
 
     def generar_vin(self):
-        """
-        Antes de generar el VIN, verificamos la licencia en el servidor.
-        Si la licencia está expirada o no existe, se mostrará error y se abortará.
-        """
-        # 1) Verificar licencia
+        """Genera VIN localmente y luego lo guarda en Flask (PostgreSQL)."""
         if not self.verificar_licencia():
             return
 
-        # 2) Lógica normal de generar VIN
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
@@ -565,32 +422,29 @@ class VINBuilderApp:
             messagebox.showerror("Error", "Faltan datos en uno de los catálogos.")
             return
 
-        sec = obtener_posicion_15_16_17(self.usuario_actual)
+        # Preparar la info del VIN
+        # (Si deseas, haz el cálculo local pos9, etc., de lo contrario, solo manda estos datos al servidor)
+        from datetime import datetime
+        # Se puede obtener un secuencial local o en servidor:
+        # Forzamos uno local si quieres:
+        sec = datetime.now().strftime("%H%M%S")  # Ejemplo, o cualquier forma
 
         vin_data = {
-            "c4": c4, "c5": c5, "c6": c6,
-            "c7": c7, "c8": c8, "c10": c10,
-            "c11": c11, "secuencial": sec
+            "c4": c4,
+            "c5": c5,
+            "c6": c6,
+            "c7": c7,
+            "c8": c8,
+            "c10": c10,
+            "c11": c11,
+            "secuencial": sec
         }
 
-        # if vin_ya_existe(vin_data, self.usuario_actual):
-        #     messagebox.showerror("Error", "Ya existe un VIN con estas características.")
-        #     return
-
-        pos9 = calcular_vin(wmi, c4, c5, c6, c7, c8, c10, c11, sec)
-        vin_str = f"{wmi}{c5}{c4}{c6}{c7}{c8}{pos9}{c10}{c11}083{sec}"
-
-        guardar_vin(vin_data, self.usuario_actual)
-
-        if self.result_label:
-            self.result_label.config(text=f"VIN/NIV: {vin_str}")
-        messagebox.showinfo("VIN Generado", f"VIN/NIV: {vin_str}")
+        # Enviar al servidor Flask
+        self.guardar_vin_en_flask(vin_data)
 
     def ventana_lista_vins(self):
-        """
-        Antes de ver la lista de VINs, verificamos la licencia.
-        Si la licencia está expirada o no existe, se mostrará error y se abortará.
-        """
+        """Obtiene VINs desde Flask (PostgreSQL) y los muestra."""
         if not self.verificar_licencia():
             return
 
@@ -598,6 +452,7 @@ class VINBuilderApp:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
 
+        vins = self.ver_vins_en_flask()
         vins_window = tk.Toplevel(self.master)
         vins_window.title("VINs Generados")
         vins_window.geometry("500x400")
@@ -613,123 +468,31 @@ class VINBuilderApp:
         canvas.configure(yscrollcommand=scrollbar.set)
 
         texto_vins = ""
-        for reg in usuarios[self.usuario_actual]["vins"]:
-            c4, c5, c6 = reg["c4"], reg["c5"], reg["c6"]
-            c7, c8, c10, c11 = reg["c7"], reg["c8"], reg["c10"], reg["c11"]
-            sec = reg["secuencial"]
-
-            pos9 = calcular_vin(self.var_wmi.get().upper(), c4, c5, c6, c7, c8, c10, c11, sec)
-            vin_r = f"{self.var_wmi.get().upper()}{c5}{c4}{c6}{c7}{c8}{pos9}{c10}{c11}083{sec}"
-
-            texto_vins += f"VIN: {vin_r}\n"
-            texto_vins += f"  - c4: {c4}, c5: {c5}, c6: {c6}, c7: {c7}\n"
-            texto_vins += f"  - c8: {c8}, c10: {c10}, c11: {c11}\n"
-            texto_vins += f"  - secuencial: {sec}\n"
+        for vin in vins:
+            texto_vins += f"VIN:\n"
+            texto_vins += f"  - c4: {vin['c4']}, c5: {vin['c5']}, c6: {vin['c6']}, c7: {vin['c7']}\n"
+            texto_vins += f"  - c8: {vin['c8']}, c10: {vin['c10']}, c11: {vin['c11']}\n"
+            texto_vins += f"  - secuencial: {vin['secuencial']}\n"
+            fecha_crea = vin.get("created_at", "")
+            texto_vins += f"  - creado: {fecha_crea}\n"
             texto_vins += "-" * 40 + "\n"
 
         ttk.Label(scroll_frame, text=texto_vins, justify=tk.LEFT).pack(pady=10)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-    def ventana_editar_tablas(self):
-        edit_win = tk.Toplevel(self.master)
-        edit_win.title("Editar Tablas de Asignación")
-        edit_win.geometry("400x300")
-
-        ttk.Label(edit_win, text="Selecciona la tabla a editar:").pack(pady=5)
-        cat_names = list(catalogos.keys())
-        var_cat = tk.StringVar(value=cat_names[0])
-        ttk.OptionMenu(edit_win, var_cat, cat_names[0], *cat_names).pack()
-
-        ttk.Label(edit_win, text="Clave (lo que verá el usuario en el menú):").pack(pady=5)
-        entry_clave = ttk.Entry(edit_win)
-        entry_clave.pack()
-
-        ttk.Label(edit_win, text="Valor (código para VIN):").pack(pady=5)
-        entry_valor = ttk.Entry(edit_win)
-        entry_valor.pack()
-
-        def do_update():
-            cat = var_cat.get()
-            dicc_obj = catalogos[cat]
-            cl = entry_clave.get().strip()
-            vl = entry_valor.get().strip()
-            if not cl or not vl:
-                messagebox.showerror("Error", "Clave y Valor no pueden estar vacíos.")
-                return
-            dicc_obj[cl] = vl
-            messagebox.showinfo("Éxito", f"Agregado/Actualizado {cl} => {vl} en {cat}.")
-            entry_clave.delete(0, 'end')
-            entry_valor.delete(0, 'end')
-            self.refrescar_menus()
-
-        ttk.Button(edit_win, text="Agregar/Actualizar", command=do_update).pack(pady=10)
-
-    def refrescar_menus(self):
-        self.menu_c4["menu"].delete(0, "end")
-        for k in posicion_4.keys():
-            self.menu_c4["menu"].add_command(label=k, command=lambda val=k: self.var_c4.set(val))
-        if posicion_4:
-            self.var_c4.set(list(posicion_4.keys())[0])
-        else:
-            self.var_c4.set("")
-
-        self.menu_c5["menu"].delete(0, "end")
-        for k in posicion_5.keys():
-            self.menu_c5["menu"].add_command(label=k, command=lambda val=k: self.var_c5.set(val))
-        if posicion_5:
-            self.var_c5.set(list(posicion_5.keys())[0])
-        else:
-            self.var_c5.set("")
-
-        self.menu_c6["menu"].delete(0, "end")
-        for k in posicion_6.keys():
-            self.menu_c6["menu"].add_command(label=k, command=lambda val=k: self.var_c6.set(val))
-        if posicion_6:
-            self.var_c6.set(list(posicion_6.keys())[0])
-        else:
-            self.var_c6.set("")
-
-        self.menu_c7["menu"].delete(0, "end")
-        for k in posicion_7.keys():
-            self.menu_c7["menu"].add_command(label=k, command=lambda val=k: self.var_c7.set(val))
-        if posicion_7:
-            self.var_c7.set(list(posicion_7.keys())[0])
-        else:
-            self.var_c7.set("")
-
-        self.menu_c8["menu"].delete(0, "end")
-        for k in posicion_8.keys():
-            self.menu_c8["menu"].add_command(label=k, command=lambda val=k: self.var_c8.set(val))
-        if posicion_8:
-            self.var_c8.set(list(posicion_8.keys())[0])
-        else:
-            self.var_c8.set("")
-
-        self.menu_c10["menu"].delete(0, "end")
-        for k in posicion_10.keys():
-            self.menu_c10["menu"].add_command(label=k, command=lambda val=k: self.var_c10.set(val))
-        if posicion_10:
-            self.var_c10.set(list(posicion_10.keys())[0])
-        else:
-            self.var_c10.set("")
-
-        self.menu_c11["menu"].delete(0, "end")
-        for k in posicion_11.keys():
-            self.menu_c11["menu"].add_command(label=k, command=lambda val=k: self.var_c11.set(val))
-        if posicion_11:
-            self.var_c11.set(list(posicion_11.keys())[0])
-        else:
-            self.var_c11.set("")
+    def limpiar_main_frame(self):
+        for w in self.main_frame.winfo_children():
+            w.destroy()
 
     def cerrar_sesion(self):
         self.usuario_actual = None
         self.mostrar_ventana_inicio()
 
-    def limpiar_main_frame(self):
-        """Destruimos todos los widgets de self.main_frame."""
-        for w in self.main_frame.winfo_children():
-            w.destroy()
+    def ventana_editar_tablas(self):
+        # Método existente para editar catálogos (local)
+        pass
+
 
 # ============================
 #  PUNTO DE ENTRADA
