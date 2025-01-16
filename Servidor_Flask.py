@@ -7,6 +7,22 @@ from flask import Flask, request, jsonify
 from marshmallow import Schema, fields, ValidationError
 import stripe
 
+import psycopg2
+from psycopg2.extras import Json
+
+# Configuración de la base de datos
+DB_CONFIG = {
+    "dbname": "vin_builder",
+    "user": "postgres",
+    "password": "merlot_5",  # Cambia esto por la contraseña de tu usuario postgres
+    "host": "localhost",
+    "port": 5432
+}
+
+def conectar_bd():
+    return psycopg2.connect(**DB_CONFIG)
+
+
 # Configura el logger
 logging.basicConfig(
     level=logging.INFO,
