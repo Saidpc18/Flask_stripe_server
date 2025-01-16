@@ -10,7 +10,9 @@ import stripe
 import psycopg2
 from psycopg2.extras import Json
 
-# Configuración de la base de datos
+# ============================
+# CONFIGURACIÓN DE LA BASE DE DATOS
+# ============================
 DB_CONFIG = {
     "dbname": "vin_builder",
     "user": "postgres",
@@ -22,7 +24,9 @@ DB_CONFIG = {
 def conectar_bd():
     return psycopg2.connect(**DB_CONFIG)
 
-# Configura el logger
+# ============================
+# LOGGING
+# ============================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -33,11 +37,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Inicializa Flask
+# ============================
+#  INICIALIZA FLASK
+# ============================
 app = Flask(__name__)
 
 # ============================
-# CONFIGURA TU CLAVE SECRETA DE STRIPE
+# CONFIGURA STRIPE
 # ============================
 stripe.api_key = "REDACTED_STRIPE_KEY"
 webhook_secret = "REDACTED_STRIPE_WEBHOOK_SECRET"
@@ -49,6 +55,7 @@ class StripeEventSchema(Schema):
     type = fields.String(required=True)
     data = fields.Dict(required=True)
 
+
 # =================================================
 #  FUNCIONES PARA OBTENER Y ADMINISTRAR USUARIOS
 # =================================================
@@ -56,17 +63,13 @@ def cargar_usuarios():
     """
     Carga todos los usuarios de la tabla 'usuarios' y los
     devuelve como un diccionario estilo JSON { username: {...}, ... }.
-    (Ya NO maneja la columna vins, pues se eliminó).
     """
     conn = conectar_bd()
     cur = conn.cursor()
-    # Nota: Asumiendo que la tabla usuarios ahora es:
-    # (id, username, password, license_expiration, secuencial, created_at)
     cur.execute("SELECT username, password, license_expiration, secuencial FROM usuarios;")
     rows = cur.fetchall()
     conn.close()
 
-    # Convertir los resultados en un diccionario estilo JSON
     usuarios = {}
     for row in rows:
         username = row[0]
@@ -98,7 +101,7 @@ def actualizar_usuario(usuario, datos):
         """,
         (
             datos["password"],
-            datos["license_expiration"],  # Puede ser string YYYY-MM-DD o None
+            datos["license_expiration"],
             datos["secuencial"],
             usuario
         )
@@ -120,7 +123,6 @@ def licencia_activa(usuario):
     if not licencia:
         return False  # Licencia no configurada
 
-    # Convertir la fecha string a datetime para comparar
     return datetime.strptime(licencia, "%Y-%m-%d") > datetime.now()
 
 def renovar_licencia(usuario):
@@ -132,17 +134,14 @@ def renovar_licencia(usuario):
     conn = conectar_bd()
     cur = conn.cursor()
 
-    # Verificar si existe
     cur.execute("SELECT username FROM usuarios WHERE username = %s", (usuario,))
     row = cur.fetchone()
     if not row:
         cur.close()
         conn.close()
-        return False  # Usuario no encontrado
+        return False
 
-    # Calcular nueva fecha de expiración
     nueva_fecha = datetime.now() + timedelta(days=365)
-    # Actualizar en la BD
     cur.execute(
         """
         UPDATE usuarios
@@ -183,7 +182,7 @@ def guardar_vin(username, vin_data):
     """
     owner_id = obtener_user_id(username)
     if not owner_id:
-        return False  # usuario no existe
+        return False
 
     conn = conectar_bd()
     cur = conn.cursor()
@@ -213,7 +212,7 @@ def listar_vins(username):
     """
     owner_id = obtener_user_id(username)
     if not owner_id:
-        return []  # Usuario no existe o no tiene VINs
+        return []
 
     conn = conectar_bd()
     cur = conn.cursor()
@@ -247,7 +246,6 @@ def listar_vins(username):
 # ============================
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
-    """Procesa eventos de Stripe enviados al webhook."""
     payload = request.data
     sig_header = request.headers.get("Stripe-Signature")
 
@@ -255,19 +253,16 @@ def stripe_webhook():
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         logger.info(f"Evento recibido: {event['type']}")
 
-        # Validar el evento con marshmallow
         schema = StripeEventSchema()
         schema.load(event)
 
-        # Manejar eventos específicos
         if event["type"] == "checkout.session.completed":
             session = event["data"]["object"]
             logger.info(f"Contenido de la sesión: {session}")
-            usuario = session.get("client_reference_id")  # ID del usuario en la sesión
+            usuario = session.get("client_reference_id")
 
             if usuario:
                 logger.info(f"Usuario encontrado: {usuario}")
-                # Renovar licencia para el usuario
                 if renovar_licencia(usuario):
                     logger.info(f"Licencia renovada para el usuario: {usuario}")
                 else:
@@ -298,22 +293,20 @@ def create_checkout_session():
             logger.error("El campo 'user' es requerido pero no fue enviado.")
             return jsonify({"error": "El campo 'user' es requerido para iniciar el proceso de pago."}), 400
 
-        # Extrae el usuario del cuerpo de la solicitud
         user = data['user']
 
-        # Crea la sesión de Stripe Checkout
         session = stripe.checkout.Session.create(
             payment_method_types=['card'],
             line_items=[
                 {
-                    'price': 'price_1QfWXBG4Og1KI6OFQcEYBl8m',  # <-- Reemplaza con tu Price ID real
+                    'price': 'price_1QfWXBG4Og1KI6OFQcEYBl8m',  # Ajusta con tu Price ID real
                     'quantity': 1,
                 },
             ],
             mode='subscription',
             success_url='http://localhost:5000/success',
             cancel_url='http://localhost:5000/cancel',
-            client_reference_id=user,  # Vincula el pago al usuario
+            client_reference_id=user,
         )
         logger.info(f"Sesión de pago creada correctamente para el usuario: {user}")
         return jsonify({'url': session.url})
@@ -327,10 +320,40 @@ def create_checkout_session():
 # ============================
 @app.route("/funcion-principal", methods=["GET"])
 def funcion_principal():
-    usuario = request.args.get("user")  # Supongamos que el cliente envía el usuario en la URL
+    usuario = request.args.get("user")
     if not licencia_activa(usuario):
         return jsonify({"error": "Licencia expirada. Renueva para continuar usando la aplicación."}), 403
     return jsonify({"message": "Acceso permitido a la función principal."})
+
+# ============================
+#  ENDPOINT PARA GUARDAR UN VIN
+# ============================
+@app.route("/guardar_vin", methods=["POST"])
+def guardar_vin_endpoint():
+    """
+    Ejemplo de endpoint para guardar un nuevo VIN de un usuario.
+    Espera un JSON con 'user' (username) y 'vin_data' (dict con c4, c5, c6, c7, c8, c10, c11, secuencial).
+    """
+    data = request.json
+    if not data:
+        return jsonify({"error": "No se proporcionaron datos."}), 400
+
+    username = data.get("user")
+    vin_data = data.get("vin_data")
+
+    if not username or not vin_data:
+        return jsonify({"error": "Faltan 'user' o 'vin_data'"}), 400
+
+    # Opcional: Verificar licencia antes de permitir guardar VIN
+    if not licencia_activa(username):
+        return jsonify({"error": "Licencia expirada. Renueva para continuar usando la aplicación."}), 403
+
+    # Guardar el VIN
+    exito = guardar_vin(username, vin_data)
+    if not exito:
+        return jsonify({"error": "No se pudo guardar el VIN (usuario no existe)."}), 404
+
+    return jsonify({"message": "VIN guardado correctamente."})
 
 # ============================
 #  ENDPOINT PARA VER VINs DE UN USUARIO
