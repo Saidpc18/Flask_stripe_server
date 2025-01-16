@@ -334,8 +334,8 @@ def create_checkout_session():
         user = data['user']
 
         # Cambia localhost a tu dominio en producción o usa variables de entorno
-        success_url = os.getenv("SUCCESS_URL", "http://localhost:5000/success")
-        cancel_url = os.getenv("CANCEL_URL", "http://localhost:5000/cancel")
+        success_url = os.getenv("SUCCESS_URL", "https://flask-stripe-server.onrender.com/success")
+        cancel_url = os.getenv("CANCEL_URL", "https://flask-stripe-server.onrender.com/cancel")
 
         session_obj = stripe.checkout.Session.create(
             payment_method_types=['card'],
