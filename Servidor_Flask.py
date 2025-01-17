@@ -223,6 +223,23 @@ def listar_vins(username):
 # ============================
 # RUTAS
 # ============================
+@app.route('/test-db', methods=['GET'])
+def test_db():
+    try:
+        conn = conectar_bd()
+        cur = conn.cursor()
+        cur.execute("SELECT 1;")  # Simple consulta para verificar conexión
+        result = cur.fetchone()
+        cur.close()
+        conn.close()
+        return jsonify({"status": "success", "result": result}), 200
+    except Exception as e:
+        logger.error(f"Error al conectar con la base de datos: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+
+
 @app.route("/")
 def home():
     return "Bienvenido a la API de VIN Builder"
