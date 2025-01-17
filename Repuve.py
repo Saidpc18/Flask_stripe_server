@@ -1,6 +1,4 @@
 import os
-import sys
-import bcrypt  # pip install bcrypt
 import tkinter as tk
 import requests  # Para enviar solicitudes HTTP al servidor Flask
 import webbrowser  # Para abrir la URL de Stripe en el navegador
