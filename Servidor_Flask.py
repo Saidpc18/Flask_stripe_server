@@ -13,7 +13,7 @@ import psycopg2
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME", "vindatabase"),
     "user": os.getenv("DB_USER", "vindatabase_owner"),
-    "password": os.getenv("DB_PASSWORD", "vindatabase_owner"),
+    "password": os.getenv("DB_PASSWORD", "kl8FIcyADWn4"),
     "host": os.getenv("DB_HOST", "ep-solitary-frost-a5hss4fj.us-east-2.aws.neon.tech"),
     "port": int(os.getenv("DB_PORT", 5432))
 }
