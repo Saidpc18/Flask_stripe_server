@@ -30,7 +30,7 @@ def conectar_bd():
 # LOGGING
 # ============================
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("app.log"),  # Guarda logs en un archivo
