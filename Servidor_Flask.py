@@ -61,7 +61,6 @@ webhook_secret = os.getenv(
 # ============================
 #  CLASE OPCIONAL PARA VALIDAR EVENTOS DE STRIPE
 # ============================
-# Úsala solo para eventos que te interesen
 class StripeEventSchema(Schema):
     type = fields.String(required=True)
     data = fields.Dict(required=True)
@@ -302,6 +301,7 @@ def create_checkout_session():
 
         user = data['user']
 
+        # Ajusta estas URLs de éxito y cancelación a tu dominio o preferencia
         success_url = os.getenv("SUCCESS_URL", "https://flask-stripe-server.onrender.com/success")
         cancel_url = os.getenv("CANCEL_URL", "https://flask-stripe-server.onrender.com/cancel")
 
