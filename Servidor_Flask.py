@@ -360,6 +360,18 @@ def create_checkout_session():
 
 
 # ============================
+# AÑADE LAS RUTAS PARA SUCCESS Y CANCEL
+# ============================
+@app.route("/success", methods=["GET"])
+def success():
+    return "¡Pago exitoso! Gracias por tu compra."
+
+@app.route("/cancel", methods=["GET"])
+def cancel():
+    return "El proceso de pago ha sido cancelado o ha fallado."
+
+
+# ============================
 # ENDPOINT PARA FUNCIONALIDADES PRINCIPALES
 # ============================
 @app.route("/funcion-principal", methods=["GET"])
