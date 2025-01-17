@@ -49,12 +49,19 @@ else:
 # ============================
 # CONFIGURA STRIPE
 # ============================
-stripe.api_key = os.getenv("STRIPE_API_KEY", "REDACTED_STRIPE_KEY")
-webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "REDACTED_STRIPE_WEBHOOK_SECRET")
+stripe.api_key = os.getenv(
+    "STRIPE_API_KEY",
+    "REDACTED_STRIPE_KEY"
+)
+webhook_secret = os.getenv(
+    "STRIPE_WEBHOOK_SECRET",
+    "REDACTED_STRIPE_WEBHOOK_SECRET"
+)
 
 # ============================
-#  CLASE PARA VALIDAR EVENTOS DE STRIPE
+#  CLASE OPCIONAL PARA VALIDAR EVENTOS DE STRIPE
 # ============================
+# Úsala solo para eventos que te interesen
 class StripeEventSchema(Schema):
     type = fields.String(required=True)
     data = fields.Dict(required=True)
@@ -230,19 +237,22 @@ def stripe_webhook():
     sig_header = request.headers.get("Stripe-Signature")
 
     try:
-        # Verificar la firma del webhook
+        # Verificar la firma del webhook de Stripe
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-        logger.info(f"Evento recibido: {event['type']}")
+        logger.info(f"Evento recibido: {event.get('type', '')}")
 
         event_type = event.get("type", "")
         event_data = event.get("data", {}).get("object", {})
 
-        # Manejo de eventos relevantes
+        # Ejemplo: Si solo quieres validar con Marshmallow cuando sea checkout.session.completed
         if event_type == "checkout.session.completed":
+            # Validar estructura con Marshmallow (si quieres)
+            schema = StripeEventSchema()
+            schema.load(event)  # Asegura que 'type' y 'data' estén presentes
+
             session = event_data
             logger.info(f"Sesión completada: {session}")
             usuario = session.get("client_reference_id")
-
             if usuario:
                 if renovar_licencia(usuario):
                     logger.info(f"Licencia renovada para el usuario: {usuario}")
@@ -252,14 +262,19 @@ def stripe_webhook():
                 logger.warning("El campo 'client_reference_id' no fue enviado.")
 
         elif event_type == "payment_intent.succeeded":
+            # Ejemplo: puedes validar también, si quieres:
+            # schema = StripeEventSchema()
+            # schema.load(event)
             payment_intent = event_data
             logger.info(f"PaymentIntent completado: {payment_intent.get('id')}")
-            # Lógica adicional si necesitas manejar pagos
 
         else:
-            # Ignora eventos no manejados devolviendo 200 OK
+            # Ignora eventos no manejados devolviendo 200 OK para evitar reintentos
             logger.info(f"Evento no manejado: {event_type}")
 
+    except ValidationError as e:
+        logger.error(f"Datos del evento inválidos: {e.messages}")
+        return "Datos del evento inválidos", 400
     except stripe.error.SignatureVerificationError as e:
         logger.error(f"Error de firma del webhook: {e}")
         return "Firma del webhook inválida", 400
@@ -267,9 +282,8 @@ def stripe_webhook():
         logger.error(f"Error procesando el webhook: {e}")
         return "Error al procesar el webhook", 400
 
-    # Responder 200 OK para todos los eventos correctamente procesados
+    # Responder 200 OK si todo fue procesado (o ignorado) correctamente
     return "OK", 200
-
 
 # ============================
 # ENDPOINT PARA CREAR SESIÓN DE PAGO
