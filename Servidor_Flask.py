@@ -230,17 +230,21 @@ def stripe_webhook():
     sig_header = request.headers.get("Stripe-Signature")
 
     try:
+        # Verifica la firma, sin validar con Marshmallow todavía
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         logger.info(f"Evento recibido: {event['type']}")
 
-        # Validar la estructura del evento con Marshmallow (opcional)
-        schema = StripeEventSchema()
-        schema.load(event)
+        event_type = event.get("type", "")
+        event_data = event.get("data", {}).get("object", {})
 
-        # Manejo de eventos
-        if event["type"] == "checkout.session.completed":
-            # Evento: checkout.session.completed
-            session = event["data"]["object"]
+        # SOLO validamos con Marshmallow si son eventos que sí manejamos
+        if event_type in ["checkout.session.completed", "payment_intent.succeeded"]:
+            schema = StripeEventSchema()
+            schema.load(event)  # Valida que exista type y data
+
+        # Manejo específico de los eventos que sí te interesan
+        if event_type == "checkout.session.completed":
+            session = event_data
             logger.info(f"Contenido de la sesión: {session}")
             usuario = session.get("client_reference_id")
 
@@ -253,17 +257,13 @@ def stripe_webhook():
             else:
                 logger.warning("El campo client_reference_id no fue enviado o es None.")
 
-        elif event["type"] == "payment_intent.succeeded":
-            # Evento: payment_intent.succeeded (ejemplo adicional)
-            payment_intent = event["data"]["object"]
-            logger.info(f"PaymentIntent completado: {payment_intent['id']}")
-
-            # Si necesitas alguna lógica adicional, agrégala aquí
-            # Por ejemplo: registrar pago en la BD o enviar correo
+        elif event_type == "payment_intent.succeeded":
+            payment_intent = event_data
+            logger.info(f"PaymentIntent completado: {payment_intent.get('id')}")
 
         else:
-            # Para cualquier otro evento
-            logger.info(f"Evento no manejado: {event['type']}")
+            # Para cualquier otro evento, simplemente lo ignoramos
+            logger.info(f"Evento no manejado: {event_type}")
 
     except ValidationError as e:
         logger.error(f"Datos del evento inválidos: {e.messages}")
@@ -273,10 +273,11 @@ def stripe_webhook():
         return "Webhook signature verification failed", 400
     except Exception as e:
         logger.error(f"Error general al procesar el webhook: {e}")
-        return "Error al procesar el webhook", 400  # Devuelve 400 para que Stripe sepa que falló
+        return "Error al procesar el webhook", 400
 
-    # Si todo se procesó correctamente, responde 200
+    # Respondemos 200 si todo fue manejado o ignorado correctamente
     return "OK", 200
+
 
 # ============================
 # ENDPOINT PARA CREAR SESIÓN DE PAGO
