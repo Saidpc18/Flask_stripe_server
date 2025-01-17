@@ -12,7 +12,20 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
 # ============================
-# CONFIGURACIÓN DE LA BASE DE DATOS (psycopg2 + SQLAlchemy)
+# CONFIGURACIÓN DE LOGGING
+# ============================
+logging.basicConfig(
+    level=logging.DEBUG,  # Cambia a INFO o WARNING en producción
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("app.log"),  # Logs en archivo
+        logging.StreamHandler()          # Logs en consola
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# ============================
+# CONFIGURACIÓN DE LA BASE DE DATOS
 # ============================
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME", "vindatabase"),
@@ -23,28 +36,18 @@ DB_CONFIG = {
 }
 
 def conectar_bd():
-    """Mantén psycopg2 para manejar usuarios y VINs."""
+    """
+    Conecta a la base de datos usando psycopg2.
+    Se utiliza para consultas directas en tablas 'usuarios' y 'vins'.
+    """
     return psycopg2.connect(**DB_CONFIG)
-
-# ============================
-# LOGGING
-# ============================
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("app.log"),  # Guarda logs en un archivo
-        logging.StreamHandler()          # Muestra logs en la consola
-    ]
-)
-logger = logging.getLogger(__name__)
 
 # ============================
 # INICIALIZA FLASK
 # ============================
 app = Flask(__name__)
 
-# Configura DEBUG según FLASK_ENV
+# Configura DEBUG según la variable de entorno
 if os.getenv("FLASK_ENV") == "production":
     app.config["DEBUG"] = False
 else:
@@ -52,12 +55,12 @@ else:
 
 # ============================
 # CONFIGURACIÓN PARA FLASK-SQLALCHEMY
+# (para la tabla 'subscriptions' y posibles futuras migraciones)
 # ============================
 default_db_url = (
     f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
     f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
 )
-
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", default_db_url)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -65,7 +68,7 @@ db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
 # ============================
-# CONFIGURA STRIPE
+# CONFIGURACIÓN DE STRIPE
 # ============================
 stripe.api_key = os.getenv(
     "STRIPE_API_KEY",
@@ -77,7 +80,7 @@ webhook_secret = os.getenv(
 )
 
 # ============================
-# CLASE OPCIONAL PARA VALIDAR EVENTOS DE STRIPE
+# ESQUEMA OPCIONAL PARA VALIDAR EVENTOS DE STRIPE
 # ============================
 class StripeEventSchema(Schema):
     type = fields.String(required=True)
@@ -87,6 +90,17 @@ class StripeEventSchema(Schema):
 # FUNCIONES DE USUARIOS (psycopg2)
 # ============================
 def cargar_usuarios():
+    """
+    Devuelve un dict con todos los usuarios de la tabla 'usuarios':
+    {
+      "username": {
+        "password": ...,
+        "license_expiration": ...,
+        "secuencial": ...
+      },
+      ...
+    }
+    """
     conn = conectar_bd()
     cur = conn.cursor()
     cur.execute("SELECT username, password, license_expiration, secuencial FROM usuarios;")
@@ -105,6 +119,14 @@ def cargar_usuarios():
     return usuarios
 
 def actualizar_usuario(usuario, datos):
+    """
+    Actualiza el usuario dado con el dict `datos`:
+    {
+      "password": str,
+      "license_expiration": str,
+      "secuencial": int
+    }
+    """
     conn = conectar_bd()
     cur = conn.cursor()
     cur.execute(
@@ -127,15 +149,25 @@ def actualizar_usuario(usuario, datos):
     conn.close()
 
 def licencia_activa(usuario):
+    """
+    Verifica si la licencia de un usuario está activa.
+    Retorna True si la fecha de expiración es mayor a la fecha actual.
+    """
     todos = cargar_usuarios()
     if usuario not in todos:
         return False
+
     licencia = todos[usuario].get("license_expiration")
     if not licencia:
         return False
+
     return datetime.strptime(licencia, "%Y-%m-%d") > datetime.now()
 
 def renovar_licencia(usuario):
+    """
+    Renueva la licencia del usuario por 365 días.
+    Retorna True si el usuario existe y se actualizó correctamente.
+    """
     conn = conectar_bd()
     cur = conn.cursor()
     cur.execute("SELECT username FROM usuarios WHERE username = %s", (usuario,))
@@ -172,6 +204,20 @@ def obtener_user_id(username):
     return row[0] if row else None
 
 def guardar_vin(username, vin_data):
+    """
+    Inserta un nuevo VIN en la tabla 'vins'.
+    Retorna False si el usuario no existe.
+    vin_data: {
+      "c4": ...,
+      "c5": ...,
+      "c6": ...,
+      "c7": ...,
+      "c8": ...,
+      "c10": ...,
+      "c11": ...,
+      "secuencial": ...
+    }
+    """
     owner_id = obtener_user_id(username)
     if not owner_id:
         return False
@@ -201,6 +247,9 @@ def guardar_vin(username, vin_data):
     return True
 
 def listar_vins(username):
+    """
+    Retorna una lista de diccionarios con todos los VINs de un usuario.
+    """
     owner_id = obtener_user_id(username)
     if not owner_id:
         return []
@@ -264,26 +313,29 @@ def home():
 # ============================
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
+    """
+    Maneja los eventos de Stripe usando la validación de firma con stripe.Webhook.construct_event().
+    """
     payload = request.data
     sig_header = request.headers.get("Stripe-Signature")
 
-    # Log temporal para depuración
+    # Logs de depuración
     logger.debug(f"Encabezado de firma recibido: {sig_header}")
     logger.debug(f"Payload recibido: {payload.decode('utf-8')}")
 
     try:
-        # Verificar la firma del webhook de Stripe
+        # Validar firma
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-        logger.info(f"Evento recibido: {event.get('type', '')}")
+        logger.info(f"Evento recibido: {event.get('type')}")
 
         event_type = event.get("type", "")
         event_data = event.get("data", {}).get("object", {})
 
+        # Manejo de eventos
         if event_type == "checkout.session.completed":
             logger.info(f"Manejando evento: {event_type}")
             session = event_data
             usuario = session.get("client_reference_id")
-
             if usuario:
                 if renovar_licencia(usuario):
                     logger.info(f"Licencia renovada para el usuario: {usuario}")
@@ -345,9 +397,7 @@ def create_checkout_session():
         success_url = os.getenv("SUCCESS_URL", "https://flask-stripe-server.onrender.com/success")
         cancel_url = os.getenv("CANCEL_URL", "https://flask-stripe-server.onrender.com/cancel")
 
-        # Manejo de errores de tarjeta
-        # Si Stripe detecta inmediatamente la tarjeta como inválida o rechazada,
-        # el CardError se capturará aquí.
+        # Manejo de errores de tarjeta al crear la sesión
         try:
             session_obj = stripe.checkout.Session.create(
                 payment_method_types=['card'],
@@ -364,24 +414,22 @@ def create_checkout_session():
             )
         except stripe.error.CardError as e:
             # Manejo de errores de tarjeta (código 402)
-            error_code = e.error.code  # Ejemplo: 'card_declined'
-            decline_code = getattr(e.error, 'decline_code', None)  # Ejemplo: 'insufficient_funds'
+            error_code = e.error.code  # p. ej. 'card_declined'
+            decline_code = getattr(e.error, 'decline_code', None)  # p. ej. 'insufficient_funds'
 
-            # Mensaje personalizado según el decline_code
             if error_code == "card_declined":
                 if decline_code == "insufficient_funds":
                     user_message = "Fondos insuficientes en la tarjeta. Usa otra."
                 elif decline_code == "lost_card":
-                    user_message = "La tarjeta ha sido reportada como perdida. Usa otra."
+                    user_message = "Tarjeta reportada como perdida. Usa otra."
                 elif decline_code == "stolen_card":
-                    user_message = "La tarjeta se reporta como robada. Usa otra."
+                    user_message = "Tarjeta reportada como robada. Usa otra."
                 else:
                     user_message = "La tarjeta fue rechazada. Contacta a tu banco."
             else:
                 user_message = f"Error de tarjeta: {e.error.message}"
 
             logger.error(f"Pago fallido: {error_code} - {decline_code} - {user_message}")
-            # Responder con 402 Payment Required o 400:
             return jsonify({"error": user_message}), 402
 
         logger.info(f"Sesión de pago creada correctamente para el usuario: {user}")
@@ -407,6 +455,10 @@ def cancel():
 # ============================
 @app.route("/funcion-principal", methods=["GET"])
 def funcion_principal():
+    """
+    Verifica si un usuario tiene licencia activa y retorna un mensaje de acceso.
+    Espera ?user=USERNAME en la query string.
+    """
     usuario = request.args.get("user")
     if not licencia_activa(usuario):
         return jsonify({"error": "Licencia expirada. Renueva para continuar usando la aplicación."}), 403
@@ -414,13 +466,16 @@ def funcion_principal():
 
 @app.route("/guardar_vin", methods=["POST"])
 def guardar_vin_endpoint():
+    """
+    Guarda un nuevo VIN de un usuario.
+    Espera un JSON con {"user": "username", "vin_data": {...}}.
+    """
     data = request.json
     if not data:
         return jsonify({"error": "No se proporcionaron datos."}), 400
 
     username = data.get("user")
     vin_data = data.get("vin_data")
-
     if not username or not vin_data:
         return jsonify({"error": "Faltan 'user' o 'vin_data'"}), 400
 
@@ -435,6 +490,9 @@ def guardar_vin_endpoint():
 
 @app.route("/ver_vins", methods=["GET"])
 def ver_vins():
+    """
+    Lista los VINs de un usuario. Espera ?user=USERNAME en la query string.
+    """
     usuario = request.args.get("user")
     if not licencia_activa(usuario):
         return jsonify({"error": "Licencia expirada. Renueva para continuar usando la aplicación."}), 403
