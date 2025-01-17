@@ -7,8 +7,12 @@ from marshmallow import Schema, fields, ValidationError
 import stripe
 import psycopg2
 
+# Flask-SQLAlchemy y Flask-Migrate
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
+
 # ============================
-# CONFIGURACIÓN DE LA BASE DE DATOS
+# CONFIGURACIÓN DE LA BASE DE DATOS (psycopg2 + SQLAlchemy)
 # ============================
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME", "vindatabase"),
@@ -19,7 +23,7 @@ DB_CONFIG = {
 }
 
 def conectar_bd():
-    """Crea una conexión a la base de datos usando DB_CONFIG."""
+    """Sigue usando psycopg2 para las funciones existentes (usuarios, VINs)."""
     return psycopg2.connect(**DB_CONFIG)
 
 # ============================
@@ -40,11 +44,27 @@ logger = logging.getLogger(__name__)
 # ============================
 app = Flask(__name__)
 
-# Configura DEBUG en base a FLASK_ENV
+# Configura DEBUG según FLASK_ENV
 if os.getenv("FLASK_ENV") == "production":
     app.config["DEBUG"] = False
 else:
     app.config["DEBUG"] = True
+
+# ============================
+# CONFIGURACIÓN PARA FLASK-SQLALCHEMY
+# ============================
+# Si no existe DATABASE_URL en el entorno, usaremos la cadena manual:
+default_db_url = (
+    f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
+    f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
+)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", default_db_url)
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Inicializa SQLAlchemy y Flask-Migrate
+db = SQLAlchemy(app)
+migrate = Migrate(app, db)
 
 # ============================
 # CONFIGURA STRIPE
@@ -59,14 +79,14 @@ webhook_secret = os.getenv(
 )
 
 # ============================
-#  CLASE OPCIONAL PARA VALIDAR EVENTOS DE STRIPE
+# CLASE OPCIONAL PARA VALIDAR EVENTOS DE STRIPE
 # ============================
 class StripeEventSchema(Schema):
     type = fields.String(required=True)
     data = fields.Dict(required=True)
 
 # ============================
-# FUNCIONES DE USUARIOS
+# FUNCIONES DE USUARIOS (vía psycopg2)
 # ============================
 def cargar_usuarios():
     conn = conectar_bd()
@@ -144,7 +164,7 @@ def renovar_licencia(usuario):
     return True
 
 # ============================
-# FUNCIONES PARA VINs
+# FUNCIONES PARA VINs (vía psycopg2)
 # ============================
 def obtener_user_id(username):
     conn = conectar_bd()
@@ -221,12 +241,24 @@ def listar_vins(username):
     return vin_list
 
 # ============================
+# EJEMPLO DE MODELO CON SQLALCHEMY (para migraciones)
+# ============================
+class Subscription(db.Model):
+    __tablename__ = 'subscriptions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    subscription_id = db.Column(db.String, unique=True, nullable=False)
+    customer_id = db.Column(db.String)
+    status = db.Column(db.String)
+    current_period_end = db.Column(db.DateTime(timezone=True))
+    created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
+
+    def __repr__(self):
+        return f"<Subscription {self.subscription_id} - {self.status}>"
+
+# ============================
 # RUTAS
 # ============================
-
-
-
-
 @app.route("/")
 def home():
     return "Bienvenido a la API de VIN Builder"
@@ -240,21 +272,19 @@ def stripe_webhook():
     sig_header = request.headers.get("Stripe-Signature")
 
     try:
-        # Verificar la firma del webhook de Stripe
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         logger.info(f"Evento recibido: {event.get('type', '')}")
 
         event_type = event.get("type", "")
         event_data = event.get("data", {}).get("object", {})
 
-        # Ejemplo: Si solo quieres validar con Marshmallow cuando sea checkout.session.completed
         if event_type == "checkout.session.completed":
-            # Validar estructura con Marshmallow (si quieres)
+            # Validación opcional con Marshmallow
             schema = StripeEventSchema()
-            schema.load(event)  # Asegura que 'type' y 'data' estén presentes
-
+            schema.load(event)
             session = event_data
             logger.info(f"Sesión completada: {session}")
+
             usuario = session.get("client_reference_id")
             if usuario:
                 if renovar_licencia(usuario):
@@ -265,14 +295,10 @@ def stripe_webhook():
                 logger.warning("El campo 'client_reference_id' no fue enviado.")
 
         elif event_type == "payment_intent.succeeded":
-            # Ejemplo: puedes validar también, si quieres:
-            # schema = StripeEventSchema()
-            # schema.load(event)
             payment_intent = event_data
             logger.info(f"PaymentIntent completado: {payment_intent.get('id')}")
 
         else:
-            # Ignora eventos no manejados devolviendo 200 OK para evitar reintentos
             logger.info(f"Evento no manejado: {event_type}")
 
     except ValidationError as e:
@@ -285,7 +311,6 @@ def stripe_webhook():
         logger.error(f"Error procesando el webhook: {e}")
         return "Error al procesar el webhook", 400
 
-    # Responder 200 OK si todo fue procesado (o ignorado) correctamente
     return "OK", 200
 
 # ============================
@@ -305,7 +330,6 @@ def create_checkout_session():
 
         user = data['user']
 
-        # Ajusta estas URLs de éxito y cancelación a tu dominio o preferencia
         success_url = os.getenv("SUCCESS_URL", "https://flask-stripe-server.onrender.com/success")
         cancel_url = os.getenv("CANCEL_URL", "https://flask-stripe-server.onrender.com/cancel")
 
@@ -313,7 +337,7 @@ def create_checkout_session():
             payment_method_types=['card'],
             line_items=[
                 {
-                    'price': 'price_1QfWXBG4Og1KI6OFQcEYBl8m',  # Ajusta con tu Price ID real
+                    'price': 'price_1QfWXBG4Og1KI6OFQcEYBl8m',
                     'quantity': 1,
                 },
             ],
@@ -385,6 +409,9 @@ def ver_vins():
 # ============================
 if __name__ == "__main__":
     try:
+        # Se elimina la importación de MigrateCommand para evitar el error
+        # Ya no llamamos MigrateCommand desde aquí
+
         port = int(os.environ.get("PORT", 5000))
         logger.info(f"Iniciando servidor en el puerto {port} (DEBUG={app.config['DEBUG']})")
         app.run(host="0.0.0.0", port=port)
