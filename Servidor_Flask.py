@@ -59,7 +59,7 @@ else:
 # ============================
 # En producción, usa variables de entorno para STRIPE_API_KEY y STRIPE_WEBHOOK_SECRET.
 # Si no existen, se usarán valores por defecto.
-stripe.api_key = os.getenv("STRIPE_API_KEY", "sk_test_51QfUyjG4Og1KI6OFFdnGycLum4dgpBqyWg2fSSRSPcsW8rcOc6s6p1R2AnAw17UnkVwUntnqrjJETYKbW0Yte2qn00lGjpWUoW")
+stripe.api_key = os.getenv("STRIPE_API_KEY", "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")
 webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_4QAnSKkUNDYAoOSfmURtHNelKARrQw5k")
 
 
