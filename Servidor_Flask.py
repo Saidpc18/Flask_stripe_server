@@ -23,7 +23,7 @@ DB_CONFIG = {
 }
 
 def conectar_bd():
-    """Sigue usando psycopg2 para las funciones existentes (usuarios, VINs)."""
+    """Mantén psycopg2 para manejar usuarios y VINs."""
     return psycopg2.connect(**DB_CONFIG)
 
 # ============================
@@ -53,7 +53,7 @@ else:
 # ============================
 # CONFIGURACIÓN PARA FLASK-SQLALCHEMY
 # ============================
-# Si no existe DATABASE_URL en el entorno, usaremos la cadena manual:
+# Si no existe DATABASE_URL, usa cadena manual
 default_db_url = (
     f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
     f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
@@ -86,7 +86,7 @@ class StripeEventSchema(Schema):
     data = fields.Dict(required=True)
 
 # ============================
-# FUNCIONES DE USUARIOS (vía psycopg2)
+# FUNCIONES DE USUARIOS (psycopg2)
 # ============================
 def cargar_usuarios():
     conn = conectar_bd()
@@ -132,11 +132,9 @@ def licencia_activa(usuario):
     todos = cargar_usuarios()
     if usuario not in todos:
         return False
-
     licencia = todos[usuario].get("license_expiration")
     if not licencia:
         return False
-
     return datetime.strptime(licencia, "%Y-%m-%d") > datetime.now()
 
 def renovar_licencia(usuario):
@@ -164,7 +162,7 @@ def renovar_licencia(usuario):
     return True
 
 # ============================
-# FUNCIONES PARA VINs (vía psycopg2)
+# FUNCIONES PARA VINs (psycopg2)
 # ============================
 def obtener_user_id(username):
     conn = conectar_bd()
@@ -271,20 +269,25 @@ def stripe_webhook():
     payload = request.data
     sig_header = request.headers.get("Stripe-Signature")
 
+    # Log temporal para depuración
+    logger.debug(f"Encabezado de firma recibido: {sig_header}")
+    logger.debug(f"Payload recibido: {payload.decode('utf-8')}")  # Para ver el cuerpo del evento
+
     try:
+        # Verificar la firma del webhook de Stripe
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         logger.info(f"Evento recibido: {event.get('type', '')}")
 
+        # Obtener el tipo de evento y los datos
         event_type = event.get("type", "")
         event_data = event.get("data", {}).get("object", {})
 
+        # Manejar eventos relevantes
         if event_type == "checkout.session.completed":
-            schema = StripeEventSchema()
-            schema.load(event)  # valida la estructura
+            logger.info(f"Manejando evento: {event_type}")
             session = event_data
-            logger.info(f"Sesión completada: {session}")
-
             usuario = session.get("client_reference_id")
+
             if usuario:
                 if renovar_licencia(usuario):
                     logger.info(f"Licencia renovada para el usuario: {usuario}")
@@ -294,23 +297,38 @@ def stripe_webhook():
                 logger.warning("El campo 'client_reference_id' no fue enviado.")
 
         elif event_type == "payment_intent.succeeded":
+            logger.info(f"Manejando evento: {event_type}")
             payment_intent = event_data
             logger.info(f"PaymentIntent completado: {payment_intent.get('id')}")
 
+        elif event_type in ["product.created", "price.created"]:
+            logger.info(f"Manejando evento: {event_type}")
+            # Procesar lógica si es necesario
+
+        elif event_type == "charge.succeeded":
+            logger.info(f"Manejando evento: {event_type}")
+            charge = event_data
+            logger.info(f"Cargo exitoso: {charge.get('id')}")
+
+        elif event_type == "charge.updated":
+            logger.info(f"Manejando evento: {event_type}")
+            charge = event_data
+            logger.info(f"Cargo actualizado: {charge.get('id')}")
+
         else:
-            logger.info(f"Evento no manejado: {event_type}")
+            logger.warning(f"Evento no manejado: {event_type}")
+
+        return jsonify({"status": "success"}), 200
 
     except ValidationError as e:
         logger.error(f"Datos del evento inválidos: {e.messages}")
-        return "Datos del evento inválidos", 400
+        return jsonify({"error": "Datos del evento inválidos"}), 400
     except stripe.error.SignatureVerificationError as e:
         logger.error(f"Error de firma del webhook: {e}")
-        return "Firma del webhook inválida", 400
+        return jsonify({"error": "Firma del webhook inválida"}), 400
     except Exception as e:
         logger.error(f"Error procesando el webhook: {e}")
-        return "Error al procesar el webhook", 400
-
-    return "OK", 200
+        return jsonify({"error": "Error al procesar el webhook"}), 400
 
 # ============================
 # ENDPOINT PARA CREAR SESIÓN DE PAGO
@@ -408,7 +426,6 @@ def ver_vins():
 # ============================
 if __name__ == "__main__":
     try:
-        # Quitamos cualquier referencia a MigrateCommand.
         port = int(os.environ.get("PORT", 5000))
         logger.info(f"Iniciando servidor en el puerto {port} (DEBUG={app.config['DEBUG']})")
         app.run(host="0.0.0.0", port=port)
