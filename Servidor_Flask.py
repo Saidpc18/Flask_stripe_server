@@ -53,7 +53,6 @@ else:
 # ============================
 # CONFIGURACIÓN PARA FLASK-SQLALCHEMY
 # ============================
-# Si no existe DATABASE_URL, usa cadena manual
 default_db_url = (
     f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
     f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
@@ -62,7 +61,6 @@ default_db_url = (
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", default_db_url)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Inicializa SQLAlchemy y Flask-Migrate
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
@@ -271,18 +269,16 @@ def stripe_webhook():
 
     # Log temporal para depuración
     logger.debug(f"Encabezado de firma recibido: {sig_header}")
-    logger.debug(f"Payload recibido: {payload.decode('utf-8')}")  # Para ver el cuerpo del evento
+    logger.debug(f"Payload recibido: {payload.decode('utf-8')}")
 
     try:
         # Verificar la firma del webhook de Stripe
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         logger.info(f"Evento recibido: {event.get('type', '')}")
 
-        # Obtener el tipo de evento y los datos
         event_type = event.get("type", "")
         event_data = event.get("data", {}).get("object", {})
 
-        # Manejar eventos relevantes
         if event_type == "checkout.session.completed":
             logger.info(f"Manejando evento: {event_type}")
             session = event_data
@@ -303,7 +299,6 @@ def stripe_webhook():
 
         elif event_type in ["product.created", "price.created"]:
             logger.info(f"Manejando evento: {event_type}")
-            # Procesar lógica si es necesario
 
         elif event_type == "charge.succeeded":
             logger.info(f"Manejando evento: {event_type}")
@@ -350,19 +345,45 @@ def create_checkout_session():
         success_url = os.getenv("SUCCESS_URL", "https://flask-stripe-server.onrender.com/success")
         cancel_url = os.getenv("CANCEL_URL", "https://flask-stripe-server.onrender.com/cancel")
 
-        session_obj = stripe.checkout.Session.create(
-            payment_method_types=['card'],
-            line_items=[
-                {
-                    'price': 'price_1QfWXBG4Og1KI6OFQcEYBl8m',
-                    'quantity': 1,
-                },
-            ],
-            mode='subscription',
-            success_url=success_url,
-            cancel_url=cancel_url,
-            client_reference_id=user,
-        )
+        # Manejo de errores de tarjeta
+        # Si Stripe detecta inmediatamente la tarjeta como inválida o rechazada,
+        # el CardError se capturará aquí.
+        try:
+            session_obj = stripe.checkout.Session.create(
+                payment_method_types=['card'],
+                line_items=[
+                    {
+                        'price': 'price_1QfWXBG4Og1KI6OFQcEYBl8m',
+                        'quantity': 1,
+                    },
+                ],
+                mode='subscription',
+                success_url=success_url,
+                cancel_url=cancel_url,
+                client_reference_id=user,
+            )
+        except stripe.error.CardError as e:
+            # Manejo de errores de tarjeta (código 402)
+            error_code = e.error.code  # Ejemplo: 'card_declined'
+            decline_code = getattr(e.error, 'decline_code', None)  # Ejemplo: 'insufficient_funds'
+
+            # Mensaje personalizado según el decline_code
+            if error_code == "card_declined":
+                if decline_code == "insufficient_funds":
+                    user_message = "Fondos insuficientes en la tarjeta. Usa otra."
+                elif decline_code == "lost_card":
+                    user_message = "La tarjeta ha sido reportada como perdida. Usa otra."
+                elif decline_code == "stolen_card":
+                    user_message = "La tarjeta se reporta como robada. Usa otra."
+                else:
+                    user_message = "La tarjeta fue rechazada. Contacta a tu banco."
+            else:
+                user_message = f"Error de tarjeta: {e.error.message}"
+
+            logger.error(f"Pago fallido: {error_code} - {decline_code} - {user_message}")
+            # Responder con 402 Payment Required o 400:
+            return jsonify({"error": user_message}), 402
+
         logger.info(f"Sesión de pago creada correctamente para el usuario: {user}")
         return jsonify({'url': session_obj.url})
 
