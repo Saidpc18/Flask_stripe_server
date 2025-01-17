@@ -662,7 +662,7 @@ class VINBuilderApp:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
 
-        url = "http://localhost:5000/guardar_vin"
+        url = "https://flask-stripe-server.onrender.com/guardar_vin"
         payload = {
             "user": self.usuario_actual,
             "vin_data": vin_data
@@ -716,7 +716,7 @@ class VINBuilderApp:
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return []
-        url = "http://localhost:5000/ver_vins"
+        url = "https://flask-stripe-server.onrender.com/ver_vins"
         try:
             resp = requests.get(url, params={"user": self.usuario_actual})
             if resp.status_code == 200:
@@ -735,7 +735,7 @@ class VINBuilderApp:
             messagebox.showerror("Error", "Inicia sesión para realizar el pago.")
             return
         try:
-            server_url = "http://localhost:5000/create-checkout-session"
+            server_url = "https://flask-stripe-server.onrender.com/create-checkout-session"
             response = requests.post(server_url, json={"user": self.usuario_actual})
             if response.status_code == 200:
                 data = response.json()
@@ -760,7 +760,7 @@ class VINBuilderApp:
             return False
         try:
             response = requests.get(
-                "http://localhost:5000/funcion-principal",
+                "https://flask-stripe-server.onrender.com/funcion-principal",
                 params={"user": self.usuario_actual}
             )
             data = response.json()
