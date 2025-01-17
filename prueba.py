@@ -1,23 +1,18 @@
-import stripe
+import requests
 
-stripe.api_key = 'REDACTED_STRIPE_KEY'
+# Define la URL de tu endpoint
+url = "https://flask-stripe-server.onrender.com/create-checkout-session"  # Cambia a tu URL de producción si aplica
 
-session = stripe.checkout.Session.create(
-    payment_method_types=['card'],
-    line_items=[{
-        'price_data': {
-            'currency': 'usd',
-            'product_data': {
-                'name': 'Nombre del Producto',
-            },
-            'unit_amount': 1000,  # Monto en centavos (1000 = $10.00)
-        },
-        'quantity': 1,
-    }],
-    mode='payment',
-    success_url='https://flask-stripe-server.onrender.com/success?session_id={CHECKOUT_SESSION_ID}',
-    cancel_url='https://flask-stripe-server.onrender.com/cancel',
-)
+# Datos a enviar en el cuerpo de la solicitud
+data = {
+    "user": "prueba_usuario"
+}
 
-# Imprime la URL de la sesión de Checkout
-print(session.url)
+# Envía la solicitud POST
+response = requests.post(url, json=data)
+
+# Muestra la respuesta
+if response.status_code == 200:
+    print("URL de Stripe Checkout:", response.json().get("url"))
+else:
+    print("Error:", response.status_code, response.json())
