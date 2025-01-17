@@ -230,52 +230,44 @@ def stripe_webhook():
     sig_header = request.headers.get("Stripe-Signature")
 
     try:
-        # Verifica la firma, sin validar con Marshmallow todavía
+        # Verificar la firma del webhook
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         logger.info(f"Evento recibido: {event['type']}")
 
         event_type = event.get("type", "")
         event_data = event.get("data", {}).get("object", {})
 
-        # SOLO validamos con Marshmallow si son eventos que sí manejamos
-        if event_type in ["checkout.session.completed", "payment_intent.succeeded"]:
-            schema = StripeEventSchema()
-            schema.load(event)  # Valida que exista type y data
-
-        # Manejo específico de los eventos que sí te interesan
+        # Manejo de eventos relevantes
         if event_type == "checkout.session.completed":
             session = event_data
-            logger.info(f"Contenido de la sesión: {session}")
+            logger.info(f"Sesión completada: {session}")
             usuario = session.get("client_reference_id")
 
             if usuario:
-                logger.info(f"Usuario encontrado: {usuario}")
                 if renovar_licencia(usuario):
                     logger.info(f"Licencia renovada para el usuario: {usuario}")
                 else:
-                    logger.warning(f"Usuario no encontrado en la BD: {usuario}")
+                    logger.warning(f"Usuario no encontrado en la base de datos: {usuario}")
             else:
-                logger.warning("El campo client_reference_id no fue enviado o es None.")
+                logger.warning("El campo 'client_reference_id' no fue enviado.")
 
         elif event_type == "payment_intent.succeeded":
             payment_intent = event_data
             logger.info(f"PaymentIntent completado: {payment_intent.get('id')}")
+            # Lógica adicional si necesitas manejar pagos
 
         else:
-            # Para cualquier otro evento, simplemente lo ignoramos
+            # Ignora eventos no manejados devolviendo 200 OK
             logger.info(f"Evento no manejado: {event_type}")
 
-    except ValidationError as e:
-        logger.error(f"Datos del evento inválidos: {e.messages}")
-        return "Datos del evento inválidos", 400
     except stripe.error.SignatureVerificationError as e:
-        logger.error(f"Error en la verificación de la firma del webhook: {e}")
-        return "Webhook signature verification failed", 400
+        logger.error(f"Error de firma del webhook: {e}")
+        return "Firma del webhook inválida", 400
     except Exception as e:
-        logger.error(f"Error general al procesar el webhook: {e}")
+        logger.error(f"Error procesando el webhook: {e}")
         return "Error al procesar el webhook", 400
 
-    # Respondemos 200 si todo fue manejado o ignorado correctamente
+    # Responder 200 OK para todos los eventos correctamente procesados
     return "OK", 200
 
 
