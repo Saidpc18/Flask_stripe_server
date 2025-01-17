@@ -79,6 +79,12 @@ webhook_secret = os.getenv(
     "REDACTED_STRIPE_WEBHOOK_SECRET"
 )
 
+if not webhook_secret:
+    logger.error("El secreto del webhook no está configurado.")
+    raise ValueError("Stripe Webhook Secret es obligatorio.")
+
+
+
 # ============================
 # ESQUEMA OPCIONAL PARA VALIDAR EVENTOS DE STRIPE
 # ============================
