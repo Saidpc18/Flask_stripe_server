@@ -76,7 +76,7 @@ stripe.api_key = os.getenv(
 )
 webhook_secret = os.getenv(
     "STRIPE_WEBHOOK_SECRET",
-    "whsec_4QAnSKkUNDYAoOSfmURtHNelKARrQw5k"
+    " whsec_8cebd49390f65f43a051b1bd0d86dad809df237674cda13dcbb0f7c6ffd67442"
 )
 
 if not webhook_secret:
