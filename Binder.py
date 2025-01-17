@@ -793,7 +793,8 @@ def run_flask():
     import traceback
     try:
         logger.info("Iniciando servidor Flask en puerto 5000")
-        app.run(host="0.0.0.0", port=5000, debug=app.config["DEBUG"])
+        app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+
     except Exception as e:
         logger.error(f"Error al iniciar Flask: {e}")
         traceback.print_exc()
