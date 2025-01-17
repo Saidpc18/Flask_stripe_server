@@ -279,9 +279,8 @@ def stripe_webhook():
         event_data = event.get("data", {}).get("object", {})
 
         if event_type == "checkout.session.completed":
-            # Validación opcional con Marshmallow
             schema = StripeEventSchema()
-            schema.load(event)
+            schema.load(event)  # valida la estructura
             session = event_data
             logger.info(f"Sesión completada: {session}")
 
@@ -409,9 +408,7 @@ def ver_vins():
 # ============================
 if __name__ == "__main__":
     try:
-        # Se elimina la importación de MigrateCommand para evitar el error
-        # Ya no llamamos MigrateCommand desde aquí
-
+        # Quitamos cualquier referencia a MigrateCommand.
         port = int(os.environ.get("PORT", 5000))
         logger.info(f"Iniciando servidor en el puerto {port} (DEBUG={app.config['DEBUG']})")
         app.run(host="0.0.0.0", port=port)
