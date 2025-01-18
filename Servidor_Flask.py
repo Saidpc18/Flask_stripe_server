@@ -37,11 +37,12 @@ DB_CONFIG = {
 }
 
 def conectar_bd():
-    """
-    Conecta a la base de datos usando psycopg2.
-    Se utiliza para consultas directas en tablas 'usuarios' y 'vins'.
-    """
-    return psycopg2.connect(**DB_CONFIG)
+    try:
+        return psycopg2.connect(**DB_CONFIG)
+    except Exception as e:
+        print(f"Error al conectar con la base de datos: {e}")
+        raise
+
 
 # ============================
 # INICIALIZA FLASK
