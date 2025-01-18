@@ -65,7 +65,7 @@ default_db_url = (
     f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
     f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
 )
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", "postgresql://postgres:woTCfdaWchoxcsKAmCaAxOBzHusEdLLj@postgres.railway.internal:5432/railway")
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", "postgresql://postgres:woTCfdaWchoxcsKAmCaAxOBzHusEdLLj@junction.proxy.rlwy.net:19506/railway")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
