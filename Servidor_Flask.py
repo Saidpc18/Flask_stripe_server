@@ -43,6 +43,8 @@ def conectar_bd():
         print(f"Error al conectar con la base de datos: {e}")
         raise
 
+print("Configuración de la base de datos:")
+print(DB_CONFIG)
 
 # ============================
 # INICIALIZA FLASK
