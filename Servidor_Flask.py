@@ -29,10 +29,10 @@ logger = logging.getLogger(__name__)
 # CONFIGURACIÓN DE LA BASE DE DATOS
 # ============================
 DB_CONFIG = {
-    "dbname": os.getenv("DB_NAME", "vindatabase"),
-    "user": os.getenv("DB_USER", "vindatabase_owner"),
-    "password": os.getenv("DB_PASSWORD", "kl8FIcyADWn4"),
-    "host": os.getenv("DB_HOST", "ep-solitary-frost-a5hss4fj.us-east-2.aws.neon.tech"),
+    "dbname": os.getenv("DB_NAME", "railway"),
+    "user": os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASSWORD", "woTCfdaWchoxcsKAmCaAxOBzHusEdLLj"),
+    "host": os.getenv("DB_HOST", "postgres.railway.internal"),
     "port": int(os.getenv("DB_PORT", 5432))
 }
 
@@ -65,7 +65,7 @@ default_db_url = (
     f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
     f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
 )
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", "postgresql://vindatabase_owner:kl8FIcyADWn4@ep-solitary-frost-a5hss4fj.us-east-2.aws.neon.tech/vindatabase?sslmode=require")
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", "postgresql://postgres:woTCfdaWchoxcsKAmCaAxOBzHusEdLLj@postgres.railway.internal:5432/railway")
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
