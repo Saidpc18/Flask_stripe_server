@@ -63,7 +63,7 @@ default_db_url = (
     f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
     f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
 )
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", default_db_url)
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", postgresql://vindatabase_owner:kl8FIcyADWn4@ep-solitary-frost-a5hss4fj.us-east-2.aws.neon.tech/vindatabase?sslmode=require)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
