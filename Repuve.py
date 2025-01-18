@@ -1,4 +1,4 @@
-import os
+
 import tkinter as tk
 import requests  # Para enviar solicitudes HTTP al servidor Flask
 import webbrowser  # Para abrir la URL de Stripe en el navegador
@@ -130,7 +130,7 @@ class VINBuilderApp:
             messagebox.showerror("Error", "Inicia sesión para realizar el pago.")
             return
         try:
-            server_url = "http://localhost:5000/create-checkout-session"
+            server_url = "https://flask-stripe-server.onrender.com/create-checkout-session"
             response = requests.post(server_url, json={"user": self.usuario_actual})
 
             if response.status_code == 200:
@@ -162,7 +162,7 @@ class VINBuilderApp:
 
         try:
             response = requests.get(
-                "http://localhost:5000/funcion-principal",
+                "https://flask-stripe-server.onrender.com/funcion-principal",
                 params={"user": self.usuario_actual}
             )
             data = response.json()
@@ -186,7 +186,7 @@ class VINBuilderApp:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
 
-        url = "http://localhost:5000/guardar_vin"
+        url = "https://flask-stripe-server.onrender.com/guardar_vin"
         payload = {
             "user": self.usuario_actual,
             "vin_data": vin_data
@@ -209,7 +209,7 @@ class VINBuilderApp:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
 
-        url = "http://localhost:5000/ver_vins"
+        url = "https://flask-stripe-server.onrender.com/ver_vins"
         try:
             resp = requests.get(url, params={"user": self.usuario_actual})
             if resp.status_code == 200:
@@ -266,18 +266,24 @@ class VINBuilderApp:
 
         def do_login():
             user = entry_user.get().strip()
-            pw = entry_pass.get()
+            pw = entry_pass.get().strip()
             if not user or not pw:
                 messagebox.showerror("Error", "Completa todos los campos.")
                 return
 
-            # Lógica local (JSON) se elimina; en producción se consultaría al servidor Flask
-            # Por ahora, asumimos que si user existe localmente...
-            # O podrías hacer un request a tu servidor Flask para autenticar.
-
-            messagebox.showinfo("Éxito", f"Bienvenido, {user}")
-            self.usuario_actual = user
-            self.ventana_principal()
+            login_url = "https://flask-stripe-server.onrender.com/login"  # O la URL de producción
+            try:
+                response = requests.post(login_url, json={"username": user, "password": pw})
+                if response.status_code == 200:
+                    messagebox.showinfo("Éxito", f"Bienvenido, {user}")
+                    self.usuario_actual = user
+                    self.ventana_principal()
+                else:
+                    data = response.json()
+                    err = data.get("error", "Error desconocido")
+                    messagebox.showerror("Error", f"Login fallido: {err}")
+            except requests.exceptions.RequestException as e:
+                messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
 
         ttk.Button(self.main_frame, text="Iniciar Sesión",
                    command=do_login).pack(pady=10)

@@ -1,6 +1,7 @@
 import os
 import logging
 from datetime import datetime, timedelta
+import bcrypt
 
 from flask import Flask, request, jsonify
 from marshmallow import Schema, fields, ValidationError
@@ -313,6 +314,67 @@ class Subscription(db.Model):
 @app.route("/")
 def home():
     return "Bienvenido a la API de VIN Builder"
+
+
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.json
+    username = data.get("username")
+    password = data.get("password")
+
+    if not username or not password:
+        return jsonify({"error": "Usuario y contraseña son requeridos."}), 400
+
+    # Comprueba si el usuario ya existe usando la función cargar_usuarios()
+    usuarios = cargar_usuarios()
+    if username in usuarios:
+        return jsonify({"error": "El usuario ya existe."}), 400
+
+    # Genera la sal y hazhea la contraseña
+    salt = bcrypt.gensalt()
+    hashed_pw = bcrypt.hashpw(password.encode('utf-8'), salt)  # resultado es bytes
+    hashed_pw_str = hashed_pw.decode('utf-8')  # se almacena como cadena
+
+    try:
+        conn = conectar_bd()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO usuarios (username, password, license_expiration, secuencial)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (username, hashed_pw_str, None, 0)  # Por ejemplo, sin licencia inicial y secuencial = 0
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error al registrar el usuario: {e}")
+        return jsonify({"error": "Error al registrar el usuario"}), 500
+
+    return jsonify({"message": "Usuario registrado exitosamente."}), 201
+
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    username = data.get("username")
+    password = data.get("password")  # en texto plano
+
+    if not username or not password:
+        return jsonify({"error": "Usuario y contraseña son requeridos"}), 400
+
+    usuarios = cargar_usuarios()  # esta función devuelve un dict de usuarios
+    if username not in usuarios:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+
+    # Suponiendo que la contraseña almacenada es un hash generado con bcrypt
+    stored_hash = usuarios[username]["password"].encode('utf-8')
+    if bcrypt.checkpw(password.encode('utf-8'), stored_hash):
+        return jsonify({"message": "Login exitoso"}), 200
+    else:
+        return jsonify({"error": "Contraseña incorrecta"}), 401
+
 
 # ============================
 # WEBHOOK DE STRIPE
