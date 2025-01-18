@@ -242,13 +242,39 @@ class VINBuilderApp:
     def ventana_crear_cuenta(self):
         self.limpiar_main_frame()
 
-        ttk.Label(self.main_frame, text="Crear Cuenta",
-                  font=("Arial", 14, "bold")).pack(pady=10)
+        ttk.Label(self.main_frame, text="Crear Cuenta", font=("Arial", 14, "bold")).pack(pady=10)
 
-        ttk.Label(self.main_frame, text="(Esta lógica ahora se haría en el servidor Flask)").pack()
+        ttk.Label(self.main_frame, text="Usuario:").pack()
+        entry_reg_user = ttk.Entry(self.main_frame)
+        entry_reg_user.pack()
 
-        ttk.Button(self.main_frame, text="Volver",
-                   command=self.mostrar_ventana_inicio).pack(pady=10)
+        ttk.Label(self.main_frame, text="Contraseña:").pack()
+        entry_reg_pass = ttk.Entry(self.main_frame, show="*")
+        entry_reg_pass.pack()
+
+        def do_register():
+            username = entry_reg_user.get().strip()
+            password = entry_reg_pass.get().strip()
+            if not username or not password:
+                messagebox.showerror("Error", "Completa todos los campos.")
+                return
+
+            # Utiliza la URL de tu servidor en producción (o de prueba)
+            register_url = "https://flask-stripe-server.onrender.com/register"
+            try:
+                response = requests.post(register_url, json={"username": username, "password": password})
+                if response.status_code == 201:
+                    messagebox.showinfo("Éxito", "Cuenta creada exitosamente. Ahora puedes iniciar sesión.")
+                    self.mostrar_ventana_inicio()  # Regresa a la pantalla principal de inicio de sesión
+                else:
+                    data = response.json()
+                    err = data.get("error", "Error desconocido")
+                    messagebox.showerror("Error", f"Registro fallido: {err}")
+            except requests.exceptions.RequestException as e:
+                messagebox.showerror("Error", f"Error al conectarse con el servidor: {e}")
+
+        ttk.Button(self.main_frame, text="Registrar", command=do_register).pack(pady=10)
+        ttk.Button(self.main_frame, text="Volver", command=self.mostrar_ventana_inicio).pack(pady=5)
 
     def ventana_iniciar_sesion(self):
         self.limpiar_main_frame()
