@@ -321,7 +321,11 @@ def home():
 
 @app.route('/register', methods=['POST'])
 def register():
-    data = request.json
+    try:
+        data = request.get_json(force=True)
+    except Exception as e:
+        logger.error(f"Error parseando JSON: {e}")
+        return jsonify({"error": "JSON inválido"}), 400
     username = data.get("username")
     password = data.get("password")
 
