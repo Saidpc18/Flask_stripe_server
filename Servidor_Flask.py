@@ -32,8 +32,8 @@ DB_CONFIG = {
     "dbname": os.getenv("DB_NAME", "railway"),
     "user": os.getenv("DB_USER", "postgres"),
     "password": os.getenv("DB_PASSWORD", "woTCfdaWchoxcsKAmCaAxOBzHusEdLLj"),
-    "host": os.getenv("DB_HOST", "postgres.railway.internal"),
-    "port": int(os.getenv("DB_PORT", 5432))
+    "host": os.getenv("DB_HOST", "junction.proxy.rlwy.net"),
+    "port": int(os.getenv("DB_PORT", 19506))
 }
 
 def conectar_bd():
