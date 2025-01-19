@@ -452,12 +452,11 @@ class VINBuilderApp:
             messagebox.showerror("Error", "Faltan datos en uno de los catálogos.")
             return
 
-        # Preparar la info del VIN
-        # (Si deseas, haz el cálculo local pos9, etc., de lo contrario, solo manda estos datos al servidor)
         from datetime import datetime
-        # Se puede obtener un secuencial local o en servidor:
-        # Forzamos uno local si quieres:
-        sec = datetime.now().strftime("%H%M%S")  # Ejemplo, o cualquier forma
+        sec = datetime.now().strftime("%H%M%S")  # secuencial
+
+        # Construye el VIN completo (ejemplo de concatenación; ajústalo a tu lógica)
+        vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{sec}"
 
         vin_data = {
             "c4": c4,
@@ -470,14 +469,20 @@ class VINBuilderApp:
             "secuencial": sec
         }
 
-        # Enviar al servidor Flask
+        # Envía a Flask
         self.guardar_vin_en_flask(vin_data)
+
+        # Actualiza la etiqueta de resultado con el VIN completo en letra grande
+        if self.result_label:
+            self.result_label.config(text=f"VIN/NIV: {vin_completo}", font=("Arial", 24, "bold"))
+        else:
+            self.result_label = ttk.Label(self.right_frame, text=f"VIN/NIV: {vin_completo}", font=("Arial", 24, "bold"))
+            self.result_label.pack(pady=5)
 
     def ventana_lista_vins(self):
         """Obtiene VINs desde Flask (PostgreSQL) y los muestra."""
         if not self.verificar_licencia():
             return
-
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
@@ -493,21 +498,23 @@ class VINBuilderApp:
 
         scroll_frame.bind("<Configure>",
                           lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-
         canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
         texto_vins = ""
         for vin in vins:
-            texto_vins += f"VIN:\n"
-            texto_vins += f"  - c4: {vin['c4']}, c5: {vin['c5']}, c6: {vin['c6']}, c7: {vin['c7']}\n"
-            texto_vins += f"  - c8: {vin['c8']}, c10: {vin['c10']}, c11: {vin['c11']}\n"
-            texto_vins += f"  - secuencial: {vin['secuencial']}\n"
+            # Suponiendo que se debe usar un WMI predefinido (o podrías guardarlo en la entrada) y que el VIN se
+            # construye concatenando las partes de la misma forma que en 'generar_vin'
+            # Por ejemplo, se asume que el VIN completo es: WMI + c4 + c5 + c6 + c7 + c8 + c10 + c11 + secuencial
+            # Ajusta la concatenación según tu lógica.
+            vin_completo = f"3J9{vin['c4']}{vin['c5']}{vin['c6']}{vin['c7']}{vin['c8']}{vin['c10']}{vin['c11']}{vin['secuencial']}"
+            texto_vins += f"VIN Completo: {vin_completo}\n"
             fecha_crea = vin.get("created_at", "")
-            texto_vins += f"  - creado: {fecha_crea}\n"
+            texto_vins += f"Creado: {fecha_crea}\n"
             texto_vins += "-" * 40 + "\n"
 
-        ttk.Label(scroll_frame, text=texto_vins, justify=tk.LEFT).pack(pady=10)
+        # Usa una fuente mayor para mostrar el VIN
+        ttk.Label(scroll_frame, text=texto_vins, justify=tk.LEFT, font=("Arial", 14, "bold")).pack(pady=10)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
