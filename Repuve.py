@@ -452,8 +452,14 @@ class VINBuilderApp:
             messagebox.showerror("Error", "Faltan datos en uno de los catálogos.")
             return
 
-        from datetime import datetime
-        sec = datetime.now().strftime("%H%M%S")  # secuencial
+        try:
+            seq_number = obtener_y_actualizar_secuencial(self.usuario_actual)
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al actualizar el secuencial: {e}")
+            return
+
+            # Formatear el secuencial a 3 dígitos (con ceros a la izquierda si es necesario)
+        seq_str = str(seq_number).zfill(3)
 
         # Construye el VIN completo (ejemplo de concatenación; ajústalo a tu lógica)
         vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{sec}"
