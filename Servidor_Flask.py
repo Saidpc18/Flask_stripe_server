@@ -201,6 +201,34 @@ def renovar_licencia(usuario):
     conn.close()
     return True
 
+
+def obtener_y_actualizar_secuencial(username):
+    """Obtiene el secuencial actual del usuario, lo incrementa (reiniciando a 1 si se pasa de 999),
+    actualiza el valor en la base de datos y lo retorna.
+    """
+    try:
+        conn = conectar_bd()
+        cur = conn.cursor()
+        # Obtener el valor actual del secuencial (si es NULL, tomamos 0)
+        cur.execute("SELECT secuencial FROM usuarios WHERE username = %s", (username,))
+        row = cur.fetchone()
+        current = row[0] if row and row[0] is not None else 0
+
+        new_seq = current + 1
+        if new_seq > 999:
+            new_seq = 1
+
+        # Actualizar el secuencial del usuario
+        cur.execute("UPDATE usuarios SET secuencial = %s WHERE username = %s", (new_seq, username))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return new_seq
+    except Exception as e:
+        logger.error(f"Error al actualizar el secuencial para {username}: {e}")
+        raise
+
+
 # ============================
 # FUNCIONES PARA VINs (psycopg2)
 # ============================
