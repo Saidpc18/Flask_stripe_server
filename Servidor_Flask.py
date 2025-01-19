@@ -205,13 +205,8 @@ def renovar_licencia(usuario):
 # FUNCIONES PARA VINs (psycopg2)
 # ============================
 def obtener_user_id(username):
-    conn = conectar_bd()
-    cur = conn.cursor()
-    cur.execute("SELECT id FROM usuarios WHERE username = %s", (username,))
-    row = cur.fetchone()
-    cur.close()
-    conn.close()
-    return row[0] if row else None
+    # Ya no necesitas consultar la base de datos para obtener el id
+    return username
 
 def guardar_vin(username, vin_data):
     """
