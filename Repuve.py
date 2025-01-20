@@ -3,6 +3,8 @@ import tkinter as tk
 import requests  # Para enviar solicitudes HTTP al servidor Flask
 import webbrowser  # Para abrir la URL de Stripe en el navegador
 from tkinter import ttk, messagebox
+from Servidor_Flask import obtener_y_actualizar_secuencial
+
 
 # ============================
 #   CATÁLOGOS (LOCALES)
@@ -453,16 +455,16 @@ class VINBuilderApp:
             return
 
         try:
-            seq_number = obtener_y_actualizar_secuencial(self.usuario_actual)
+            sec = obtener_y_actualizar_secuencial(self.usuario_actual)
         except Exception as e:
             messagebox.showerror("Error", f"Error al actualizar el secuencial: {e}")
             return
 
-            # Formatear el secuencial a 3 dígitos (con ceros a la izquierda si es necesario)
-        seq_str = str(seq_number).zfill(3)
+        # Formatear el secuencial a 3 dígitos (con ceros a la izquierda si es necesario)
+        seq_str = str(sec).zfill(3)
 
-        # Construye el VIN completo (ejemplo de concatenación; ajústalo a tu lógica)
-        vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{sec}"
+        # Construye el VIN completo
+        vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{seq_str}"
 
         vin_data = {
             "c4": c4,
@@ -472,7 +474,7 @@ class VINBuilderApp:
             "c8": c8,
             "c10": c10,
             "c11": c11,
-            "secuencial": sec
+            "secuencial": seq_str
         }
 
         # Envía a Flask
