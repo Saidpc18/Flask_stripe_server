@@ -202,24 +202,31 @@ def renovar_licencia(usuario):
     return True
 
 
-def obtener_y_actualizar_secuencial(username):
-    """Obtiene el secuencial actual del usuario, lo incrementa (reiniciando a 1 si se pasa de 999),
-    actualiza el valor en la base de datos y lo retorna.
+def obtener_y_actualizar_secuencial(username, year):
+    """
+    Obtiene y actualiza el secuencial del usuario, reiniciando si el año cambia.
     """
     try:
         conn = conectar_bd()
         cur = conn.cursor()
-        # Obtener el valor actual del secuencial (si es NULL, tomamos 0)
-        cur.execute("SELECT secuencial FROM usuarios WHERE username = %s", (username,))
+
+        # Obtener el secuencial actual y el último año
+        cur.execute("SELECT secuencial, last_year FROM usuarios WHERE username = %s", (username,))
         row = cur.fetchone()
-        current = row[0] if row and row[0] is not None else 0
+        current_seq = row[0] if row and row[0] is not None else 0
+        last_year = row[1] if row and row[1] is not None else None
 
-        new_seq = current + 1
-        if new_seq > 999:
+        # Reiniciar si el año cambia
+        if last_year != year:
             new_seq = 1
+        else:
+            new_seq = current_seq + 1 if current_seq < 999 else 1
 
-        # Actualizar el secuencial del usuario
-        cur.execute("UPDATE usuarios SET secuencial = %s WHERE username = %s", (new_seq, username))
+        # Actualizar secuencial y año en la base de datos
+        cur.execute(
+            "UPDATE usuarios SET secuencial = %s, last_year = %s WHERE username = %s",
+            (new_seq, year, username),
+        )
         conn.commit()
         cur.close()
         conn.close()
@@ -227,6 +234,7 @@ def obtener_y_actualizar_secuencial(username):
     except Exception as e:
         logger.error(f"Error al actualizar el secuencial para {username}: {e}")
         raise
+
 
 
 # ============================

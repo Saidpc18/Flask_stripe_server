@@ -24,7 +24,7 @@ posicion_4 = {
 }
 posicion_5 = {
     "5' X 10' A 14' Pies": "1",
-    "5´ X 15´ A 20´Pies\t": "2",
+    "5´ X 15´ A 20´Pies": "2",
     "6´ X 10´ A  14´ Pies": "3",
     "6´ X 15´ A  20´ Pies": "4",
     "7´ X 10´ A  15´  Pies": "5",
@@ -437,11 +437,8 @@ class VINBuilderApp:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
 
+        # Obtener valores para las posiciones del VIN
         wmi = self.var_wmi.get().strip().upper()
-        if not wmi:
-            messagebox.showerror("Error", "El WMI no puede estar vacío.")
-            return
-
         c4 = posicion_4.get(self.var_c4.get(), "")
         c5 = posicion_5.get(self.var_c5.get(), "")
         c6 = posicion_6.get(self.var_c6.get(), "")
@@ -450,23 +447,33 @@ class VINBuilderApp:
         c10 = posicion_10.get(self.var_c10.get(), "")
         c11 = posicion_11.get(self.var_c11.get(), "")
 
-        if not (c4 and c5 and c6 and c7 and c8 and c10 and c11):
+        if not (wmi and c4 and c5 and c6 and c7 and c8 and c10 and c11):
             messagebox.showerror("Error", "Faltan datos en uno de los catálogos.")
             return
 
         try:
-            sec = obtener_y_actualizar_secuencial(self.usuario_actual)
+            # Obtener y actualizar el secuencial
+            sec = obtener_y_actualizar_secuencial(self.usuario_actual, c10)
         except Exception as e:
             messagebox.showerror("Error", f"Error al actualizar el secuencial: {e}")
             return
 
-        # Formatear el secuencial a 3 dígitos (con ceros a la izquierda si es necesario)
-        seq_str = str(sec).zfill(3)
+        # Formatear el secuencial a 3 dígitos
+        sec_str = str(sec).zfill(3)
 
-        # Construye el VIN completo
-        vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{seq_str}"
+        # Posiciones fijas 12, 13, 14
+        fixed_12_14 = "098"
 
+        # Calcular la posición 9 (módulo 11 de la suma ponderada)
+        valores = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{fixed_12_14}{sec_str}"
+        pos9 = self.calcular_posicion_9(valores)
+
+        # Construir el VIN completo
+        vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{pos9}{c10}{c11}{fixed_12_14}{sec_str}"
+
+        # Guardar VIN en el servidor Flask
         vin_data = {
+            "wmi": wmi,
             "c4": c4,
             "c5": c5,
             "c6": c6,
@@ -474,18 +481,38 @@ class VINBuilderApp:
             "c8": c8,
             "c10": c10,
             "c11": c11,
-            "secuencial": seq_str
+            "pos9": pos9,
+            "fixed_12_14": fixed_12_14,
+            "secuencial": sec_str,
+            "vin_completo": vin_completo,
         }
-
-        # Envía a Flask
         self.guardar_vin_en_flask(vin_data)
 
-        # Actualiza la etiqueta de resultado con el VIN completo en letra grande
+        # Mostrar el VIN generado
         if self.result_label:
             self.result_label.config(text=f"VIN/NIV: {vin_completo}", font=("Arial", 24, "bold"))
         else:
             self.result_label = ttk.Label(self.right_frame, text=f"VIN/NIV: {vin_completo}", font=("Arial", 24, "bold"))
             self.result_label.pack(pady=5)
+
+    def calcular_posicion_9(self, valores):
+        """
+        Calcula la posición 9 del VIN usando módulo 11 de la suma ponderada de las posiciones.
+        """
+        ponderaciones = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2]  # Pesos
+        sustituciones = {
+            **{str(i): i for i in range(10)},  # Números del 0 al 9
+            **{chr(i): i - 55 for i in range(65, 91)},  # Letras A-Z (A=10, B=11, ..., Z=35)
+        }
+
+        suma_ponderada = sum(
+            sustituciones.get(char, 0) * peso
+            for char, peso in zip(valores, ponderaciones)
+        )
+
+        # Cálculo del módulo
+        resultado_modulo = suma_ponderada % 11
+        return "X" if resultado_modulo == 10 else str(resultado_modulo)
 
     def ventana_lista_vins(self):
         """Obtiene VINs desde Flask (PostgreSQL) y los muestra."""
