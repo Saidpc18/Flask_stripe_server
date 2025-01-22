@@ -1,4 +1,3 @@
-
 import tkinter as tk
 import requests  # Para enviar solicitudes HTTP al servidor Flask
 import webbrowser  # Para abrir la URL de Stripe en el navegador
@@ -191,12 +190,11 @@ class VINBuilderApp:
         url = "https://flask-stripe-server.onrender.com/guardar_vin"
         payload = {
             "user": self.usuario_actual,
-            "vin_data": vin_data
+            **vin_data  # Asegúrate de enviar todos los datos del VIN
         }
         try:
             resp = requests.post(url, json=payload)
             if resp.status_code == 200:
-                # VIN guardado con éxito
                 messagebox.showinfo("Éxito", "VIN guardado correctamente (en PostgreSQL).")
             else:
                 data = resp.json()
