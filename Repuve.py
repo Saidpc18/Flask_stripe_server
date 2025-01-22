@@ -497,21 +497,25 @@ class VINBuilderApp:
 
     def calcular_posicion_9(self, valores):
         """
-        Calcula la posición 9 del VIN usando módulo 11 de la suma ponderada de las posiciones.
+        Calcula la posición 9 del VIN usando la tabla personalizada de sustituciones.
         """
-        ponderaciones = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2]  # Pesos
+        # Tabla personalizada de valores
         sustituciones = {
-            **{str(i): i for i in range(10)},  # Números del 0 al 9
-            **{chr(i): i - 55 for i in range(65, 91)},  # Letras A-Z (A=10, B=11, ..., Z=35)
+            "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
+            "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9, "S": 2,
+            "T": 3, "U": 4, "V": 5, "W": 6, "X": 7, "Y": 8, "Z": 9,
+            **{str(i): i for i in range(10)}  # Números del 0 al 9
         }
 
-        suma_ponderada = sum(
-            sustituciones.get(char, 0) * peso
-            for char, peso in zip(valores, ponderaciones)
+        # Cálculo de la suma ponderada sin pesos, solo sustituciones
+        suma = sum(
+            sustituciones.get(char, 0) for char in valores
         )
 
         # Cálculo del módulo
-        resultado_modulo = suma_ponderada % 11
+        resultado_modulo = suma % 11
+
+        # Devuelve "X" si el módulo es 10, o el número correspondiente
         return "X" if resultado_modulo == 10 else str(resultado_modulo)
 
     def ventana_lista_vins(self):
