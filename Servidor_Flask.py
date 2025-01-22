@@ -570,41 +570,52 @@ def funcion_principal():
         return jsonify({"error": "Licencia expirada. Renueva para continuar usando la aplicación."}), 403
     return jsonify({"message": "Acceso permitido a la función principal."})
 
-@app.route("/guardar_vin", methods=["POST"])
-def guardar_vin_endpoint():
-    """
-    Guarda un nuevo VIN de un usuario.
-    Espera un JSON con {"user": "username", "vin_data": {...}}.
-    """
+
+
+class VIN(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user = db.Column(db.String(50), nullable=False)
+    vin_completo = db.Column(db.String(17), nullable=False)  # Almacena el VIN completo
+    created_at = db.Column(db.DateTime, default=db.func.now())  # Fecha de creación
+@app.route('/guardar_vin', methods=['POST'])
+def guardar_vin():
     data = request.json
-    if not data:
-        return jsonify({"error": "No se proporcionaron datos."}), 400
+    user = data.get("user")
+    vin_completo = data.get("vin_completo")  # Obtener el VIN completo del payload
 
-    username = data.get("user")
-    vin_data = data.get("vin_data")
-    if not username or not vin_data:
-        return jsonify({"error": "Faltan 'user' o 'vin_data'"}), 400
+    if not user or not vin_completo:
+        return jsonify({"error": "Faltan datos necesarios"}), 400
 
-    if not licencia_activa(username):
-        return jsonify({"error": "Licencia expirada. Renueva para continuar usando la aplicación."}), 403
+    try:
+        # Crear un nuevo registro en la base de datos
+        nuevo_vin = VIN(user=user, vin_completo=vin_completo)
+        db.session.add(nuevo_vin)
+        db.session.commit()
+        return jsonify({"message": "VIN guardado exitosamente"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
 
-    exito = guardar_vin(username, vin_data)
-    if not exito:
-        return jsonify({"error": "No se pudo guardar el VIN (usuario no existe)."}), 404
-
-    return jsonify({"message": "VIN guardado correctamente."})
-
-@app.route("/ver_vins", methods=["GET"])
+@app.route('/ver_vins', methods=['GET'])
 def ver_vins():
-    """
-    Lista los VINs de un usuario. Espera ?user=USERNAME en la query string.
-    """
-    usuario = request.args.get("user")
-    if not licencia_activa(usuario):
-        return jsonify({"error": "Licencia expirada. Renueva para continuar usando la aplicación."}), 403
+    user = request.args.get("user")
+    if not user:
+        return jsonify({"error": "Usuario no especificado"}), 400
 
-    vin_list = listar_vins(usuario)
-    return jsonify({"vins": vin_list})
+    try:
+        # Consulta los VINs del usuario en la base de datos
+        vins = VIN.query.filter_by(user=user).all()
+        resultado = [
+            {
+                "vin_completo": vin.vin_completo,
+                "created_at": vin.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            for vin in vins
+        ]
+        return jsonify({"vins": resultado}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 # ============================
 # PUNTO DE ENTRADA
