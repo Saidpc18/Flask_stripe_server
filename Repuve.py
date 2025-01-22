@@ -542,17 +542,13 @@ class VINBuilderApp:
 
         texto_vins = ""
         for vin in vins:
-            # Suponiendo que se debe usar un WMI predefinido (o podrías guardarlo en la entrada) y que el VIN se
-            # construye concatenando las partes de la misma forma que en 'generar_vin'
-            # Por ejemplo, se asume que el VIN completo es: WMI + c4 + c5 + c6 + c7 + c8 + c10 + c11 + secuencial
-            # Ajusta la concatenación según tu lógica.
-            vin_completo = f"3J9{vin['c4']}{vin['c5']}{vin['c6']}{vin['c7']}{vin['c8']}{vin['c10']}{vin['c11']}{vin['secuencial']}"
+            # Asegúrate de que `vin_completo` esté incluido en los datos recuperados
+            vin_completo = vin.get("vin_completo", "VIN no disponible")
             texto_vins += f"VIN Completo: {vin_completo}\n"
             fecha_crea = vin.get("created_at", "")
             texto_vins += f"Creado: {fecha_crea}\n"
             texto_vins += "-" * 40 + "\n"
 
-        # Usa una fuente mayor para mostrar el VIN
         ttk.Label(scroll_frame, text=texto_vins, justify=tk.LEFT, font=("Arial", 14, "bold")).pack(pady=10)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
