@@ -6,9 +6,7 @@ import bcrypt
 from flask import Flask, request, jsonify
 from marshmallow import Schema, fields, ValidationError
 import stripe
-import psycopg2
 
-# Flask-SQLAlchemy y Flask-Migrate
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
@@ -36,13 +34,7 @@ DB_CONFIG = {
     "port": int(os.getenv("DB_PORT", 19506))
 }
 
-def conectar_bd():
-    try:
-        return psycopg2.connect(**DB_CONFIG)
-    except Exception as e:
-        print(f"Error al conectar con la base de datos: {e}")
-        raise
-
+# Solo para mostrar la configuración en logs
 print("Configuración de la base de datos:")
 print(DB_CONFIG)
 
@@ -59,15 +51,16 @@ else:
 
 # ============================
 # CONFIGURACIÓN PARA FLASK-SQLALCHEMY
-# (para la tabla 'subscriptions' y posibles futuras migraciones)
 # ============================
+# Construimos la URL de la BD
 default_db_url = (
     f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
     f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
 )
+
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
     "DATABASE_URL",
-    "postgresql://postgres:woTCfdaWchoxcsKAmCaAxOBzHusEdLLj@junction.proxy.rlwy.net:19506/railway"
+    default_db_url  # Por si no está definida DATABASE_URL en el entorno
 )
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -98,235 +91,46 @@ class StripeEventSchema(Schema):
     data = fields.Dict(required=True)
 
 # ============================
-# FUNCIONES DE USUARIOS (psycopg2)
+# MODELOS SQLALCHEMY
 # ============================
-def cargar_usuarios():
+
+class User(db.Model):
     """
-    Devuelve un dict con todos los usuarios de la tabla 'usuarios':
-    {
-      "username": {
-        "password": ...,
-        "license_expiration": ...,
-        "secuencial": ...
-      },
-      ...
-    }
+    Modelo para la tabla 'usuarios' (en español).
+    Ajusta __tablename__ si tu tabla real se llama distinto.
     """
-    conn = conectar_bd()
-    cur = conn.cursor()
-    cur.execute("SELECT username, password, license_expiration, secuencial FROM usuarios;")
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
+    __tablename__ = 'usuarios'
 
-    usuarios = {}
-    for row in rows:
-        username, password, license_exp, secuencial = row
-        usuarios[username] = {
-            "password": password,
-            "license_expiration": license_exp.strftime("%Y-%m-%d") if license_exp else None,
-            "secuencial": secuencial
-        }
-    return usuarios
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False)
+    license_expiration = db.Column(db.DateTime, nullable=True)  # Fecha de expiración de la licencia
+    secuencial = db.Column(db.Integer, default=0)               # Contador secuencial
+    last_year = db.Column(db.Integer, nullable=True)            # Año de referencia para resetear secuencial
+    created_at = db.Column(db.DateTime, default=db.func.now())  # Fecha de creación
 
-def actualizar_usuario(usuario, datos):
+    # Relación con VINs (si queremos consultarlos desde el usuario)
+    vins = db.relationship("VIN", backref="owner", lazy=True)
+
+    def __repr__(self):
+        return f"<User {self.username}>"
+
+class VIN(db.Model):
     """
-    Actualiza el usuario dado con el dict `datos`:
-    {
-      "password": str,
-      "license_expiration": str,
-      "secuencial": int
-    }
+    Modelo para la tabla "VIN" (en mayúsculas).
+    Ajusta __tablename__ si tu tabla real se llama distinto.
     """
-    conn = conectar_bd()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        UPDATE usuarios
-        SET password = %s,
-            license_expiration = %s,
-            secuencial = %s
-        WHERE username = %s
-        """,
-        (
-            datos["password"],
-            datos["license_expiration"],
-            datos["secuencial"],
-            usuario
-        )
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
+    __tablename__ = 'VIN'  # Si tu tabla en la DB se llama "VIN" con mayúsculas
+    id = db.Column(db.Integer, primary_key=True)
+    # Relacionado con User; user_id apunta a 'usuarios.id'
+    user_id = db.Column(db.Integer, db.ForeignKey('usuarios.id'), nullable=False)
 
-def licencia_activa(usuario):
-    """
-    Verifica si la licencia de un usuario está activa.
-    Retorna True si la fecha de expiración es mayor a la fecha actual.
-    """
-    todos = cargar_usuarios()
-    if usuario not in todos:
-        return False
+    vin_completo = db.Column(db.String(17), nullable=False)
+    created_at = db.Column(db.DateTime, default=db.func.now())
 
-    licencia = todos[usuario].get("license_expiration")
-    if not licencia:
-        return False
+    def __repr__(self):
+        return f"<VIN {self.vin_completo}>"
 
-    return datetime.strptime(licencia, "%Y-%m-%d") > datetime.now()
-
-def renovar_licencia(usuario):
-    """
-    Renueva la licencia del usuario por 365 días.
-    Retorna True si el usuario existe y se actualizó correctamente.
-    """
-    conn = conectar_bd()
-    cur = conn.cursor()
-    cur.execute("SELECT username FROM usuarios WHERE username = %s", (usuario,))
-    row = cur.fetchone()
-    if not row:
-        cur.close()
-        conn.close()
-        return False
-
-    nueva_fecha = datetime.now() + timedelta(days=365)
-    cur.execute(
-        """
-        UPDATE usuarios
-        SET license_expiration = %s
-        WHERE username = %s
-        """,
-        (nueva_fecha, usuario)
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
-    return True
-
-def obtener_y_actualizar_secuencial(username, year):
-    """
-    Obtiene y actualiza el secuencial del usuario, reiniciando si el año cambia.
-    """
-    try:
-        conn = conectar_bd()
-        cur = conn.cursor()
-
-        # Obtener el secuencial actual y el último año
-        cur.execute("SELECT secuencial, last_year FROM usuarios WHERE username = %s", (username,))
-        row = cur.fetchone()
-        current_seq = row[0] if row and row[0] is not None else 0
-        last_year = row[1] if row and row[1] is not None else None
-
-        # Reiniciar si el año cambia
-        if last_year != year:
-            new_seq = 1
-        else:
-            new_seq = current_seq + 1 if current_seq < 999 else 1
-
-        # Actualizar secuencial y año en la base de datos
-        cur.execute(
-            "UPDATE usuarios SET secuencial = %s, last_year = %s WHERE username = %s",
-            (new_seq, year, username),
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
-        return new_seq
-    except Exception as e:
-        logger.error(f"Error al actualizar el secuencial para {username}: {e}")
-        raise
-
-# ============================
-# FUNCIONES PARA VINs (psycopg2)
-# ============================
-def obtener_user_id(username):
-    # Ya no necesitas consultar la base de datos para obtener el id
-    return username
-
-def guardar_vin(username, vin_data):
-    """
-    Inserta un nuevo VIN en la tabla 'vins'.
-    Retorna False si el usuario no existe.
-    vin_data: {
-      "c4": ...,
-      "c5": ...,
-      "c6": ...,
-      "c7": ...,
-      "c8": ...,
-      "c10": ...,
-      "c11": ...,
-      "secuencial": ...
-    }
-    """
-    owner_id = obtener_user_id(username)
-    if not owner_id:
-        return False
-
-    conn = conectar_bd()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO vins (owner_id, c4, c5, c6, c7, c8, c10, c11, secuencial)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        (
-            owner_id,
-            vin_data["c4"],
-            vin_data["c5"],
-            vin_data["c6"],
-            vin_data["c7"],
-            vin_data["c8"],
-            vin_data["c10"],
-            vin_data["c11"],
-            vin_data["secuencial"]
-        )
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
-    return True
-
-def listar_vins(username):
-    """
-    Retorna una lista de diccionarios con todos los VINs de un usuario.
-    """
-    owner_id = obtener_user_id(username)
-    if not owner_id:
-        return []
-
-    conn = conectar_bd()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT c4, c5, c6, c7, c8, c10, c11, secuencial, created_at
-        FROM vins
-        WHERE owner_id = %s
-        ORDER BY created_at ASC
-        """,
-        (owner_id,)
-    )
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-
-    vin_list = []
-    for row in rows:
-        c4, c5, c6, c7, c8, c10, c11, sec, created_at = row
-        vin_list.append({
-            "c4": c4,
-            "c5": c5,
-            "c6": c6,
-            "c7": c7,
-            "c8": c8,
-            "c10": c10,
-            "c11": c11,
-            "secuencial": sec,
-            "created_at": created_at.strftime("%Y-%m-%d %H:%M:%S")
-        })
-    return vin_list
-
-# ============================
-# MODELOS SQLALCHEMY (para migraciones)
-# ============================
 class Subscription(db.Model):
     __tablename__ = 'subscriptions'
 
@@ -340,24 +144,61 @@ class Subscription(db.Model):
     def __repr__(self):
         return f"<Subscription {self.subscription_id} - {self.status}>"
 
-# IMPORTANTE: si tu tabla en PostgreSQL se llama exactamente "VIN" en mayúsculas,
-# debes especificarlo así (de lo contrario, SQLAlchemy podría crear/usar otra tabla):
-class VIN(db.Model):
-    __tablename__ = 'VIN'  # <-- Coincide con la tabla en mayúsculas
-    id = db.Column(db.Integer, primary_key=True)
-    user = db.Column(db.String(50), nullable=False)
-    vin_completo = db.Column(db.String(17), nullable=False)
-    created_at = db.Column(db.DateTime, default=db.func.now())
+# ============================
+# FUNCIONES AUXILIARES / LÓGICA DE NEGOCIO
+# ============================
+
+def get_user_by_username(username):
+    """ Devuelve una instancia de User o None. """
+    return User.query.filter_by(username=username).first()
+
+def license_is_active(user: User) -> bool:
+    """
+    Verifica si la licencia de un usuario está activa (fecha > now).
+    """
+    if not user or not user.license_expiration:
+        return False
+    return user.license_expiration > datetime.now()
+
+def renew_license(user: User) -> bool:
+    """
+    Renueva la licencia del usuario por 365 días.
+    Retorna True si el usuario existe, False si no.
+    """
+    if not user:
+        return False
+    user.license_expiration = datetime.now() + timedelta(days=365)
+    db.session.commit()
+    return True
+
+def update_secuencial(user: User, year: int) -> int:
+    """
+    Obtiene y actualiza el secuencial del usuario, reiniciando si el año cambió.
+    Retorna el nuevo valor de secuencial.
+    """
+    if not user:
+        return 0
+    if user.last_year != year:
+        user.secuencial = 1
+        user.last_year = year
+    else:
+        user.secuencial = user.secuencial + 1 if user.secuencial < 999 else 1
+    db.session.commit()
+    return user.secuencial
 
 # ============================
 # RUTAS
 # ============================
 @app.route("/")
 def home():
-    return "Bienvenido a la API de VIN Builder"
+    return "Bienvenido a la API de VIN Builder (SQLAlchemy Edition)"
 
 @app.route('/register', methods=['POST'])
 def register():
+    """
+    Registra un nuevo usuario.
+    JSON esperado: {"username": "algo", "password": "algo"}
+    """
     try:
         data = request.get_json(force=True)
     except Exception as e:
@@ -370,30 +211,23 @@ def register():
     if not username or not password:
         return jsonify({"error": "Usuario y contraseña son requeridos."}), 400
 
-    # Comprueba si el usuario ya existe usando la función cargar_usuarios()
-    usuarios = cargar_usuarios()
-    if username in usuarios:
+    # Comprueba si el usuario ya existe
+    existing = get_user_by_username(username)
+    if existing:
         return jsonify({"error": "El usuario ya existe."}), 400
 
-    # Genera la sal y hashea la contraseña
+    # Hashea la contraseña con bcrypt
     salt = bcrypt.gensalt()
-    hashed_pw = bcrypt.hashpw(password.encode('utf-8'), salt)  # resultado es bytes
-    hashed_pw_str = hashed_pw.decode('utf-8')  # se almacena como cadena
+    hashed_pw = bcrypt.hashpw(password.encode('utf-8'), salt)
+    hashed_pw_str = hashed_pw.decode('utf-8')
 
+    # Crear instancia del modelo
+    new_user = User(username=username, password=hashed_pw_str)
+    db.session.add(new_user)
     try:
-        conn = conectar_bd()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO usuarios (username, password, license_expiration, secuencial)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (username, hashed_pw_str, None, 0)
-        )
-        conn.commit()
-        cur.close()
-        conn.close()
+        db.session.commit()
     except Exception as e:
+        db.session.rollback()
         logger.error(f"Error al registrar el usuario: {e}")
         return jsonify({"error": "Error al registrar el usuario"}), 500
 
@@ -401,20 +235,23 @@ def register():
 
 @app.route('/login', methods=['POST'])
 def login():
+    """
+    Inicia sesión de un usuario.
+    JSON esperado: {"username": "algo", "password": "algo"}
+    """
     data = request.json
     username = data.get("username")
-    password = data.get("password")  # en texto plano
+    password = data.get("password")  # texto plano
 
     if not username or not password:
         return jsonify({"error": "Usuario y contraseña son requeridos"}), 400
 
-    usuarios = cargar_usuarios()  # esta función devuelve un dict de usuarios
-    if username not in usuarios:
+    user = get_user_by_username(username)
+    if not user:
         return jsonify({"error": "Usuario no encontrado"}), 404
 
-    # Suponiendo que la contraseña almacenada es un hash generado con bcrypt
-    stored_hash = usuarios[username]["password"].encode('utf-8')
-    if bcrypt.checkpw(password.encode('utf-8'), stored_hash):
+    # Verifica contraseña
+    if bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8')):
         return jsonify({"message": "Login exitoso"}), 200
     else:
         return jsonify({"error": "Contraseña incorrecta"}), 401
@@ -430,7 +267,6 @@ def stripe_webhook():
     payload = request.data
     sig_header = request.headers.get("Stripe-Signature")
 
-    # Logs de depuración
     logger.debug(f"Encabezado de firma recibido: {sig_header}")
     logger.debug(f"Payload recibido: {payload.decode('utf-8')}")
 
@@ -448,10 +284,11 @@ def stripe_webhook():
             session = event_data
             usuario = session.get("client_reference_id")
             if usuario:
-                if renovar_licencia(usuario):
+                user = get_user_by_username(usuario)
+                if renew_license(user):
                     logger.info(f"Licencia renovada para el usuario: {usuario}")
                 else:
-                    logger.warning(f"Usuario no encontrado en la base de datos: {usuario}")
+                    logger.warning(f"Usuario no encontrado: {usuario}")
             else:
                 logger.warning("El campo 'client_reference_id' no fue enviado.")
 
@@ -495,7 +332,7 @@ def stripe_webhook():
 def create_checkout_session():
     """
     Crea una sesión de pago de Stripe y devuelve la URL de Checkout.
-    Espera un JSON con {"user": "nombre_usuario"}.
+    JSON esperado: {"user": "nombre_usuario"}
     """
     try:
         data = request.json
@@ -571,8 +408,9 @@ def funcion_principal():
     Espera ?user=USERNAME en la query string.
     """
     usuario = request.args.get("user")
-    if not licencia_activa(usuario):
-        return jsonify({"error": "Licencia expirada. Renueva para continuar usando la aplicación."}), 403
+    user = get_user_by_username(usuario)
+    if not license_is_active(user):
+        return jsonify({"error": "Licencia expirada o usuario inexistente. Renueva para continuar."}), 403
     return jsonify({"message": "Acceso permitido a la función principal."})
 
 # ============================
@@ -580,32 +418,47 @@ def funcion_principal():
 # ============================
 @app.route('/guardar_vin', methods=['POST'])
 def guardar_vin_endpoint():
+    """
+    Guarda un VIN completo en la tabla VIN, asociándolo a un usuario existente.
+    JSON esperado: {"user": "username", "vin_completo": "17 chars"}
+    """
     data = request.json
-    user = data.get("user")
-    vin_completo = data.get("vin_completo")  # Obtener el VIN completo del payload
+    user_name = data.get("user")
+    vin_completo = data.get("vin_completo")
 
-    if not user or not vin_completo:
-        return jsonify({"error": "Faltan datos necesarios"}), 400
+    if not user_name or not vin_completo:
+        return jsonify({"error": "Faltan datos necesarios (user, vin_completo)"}), 400
+
+    user = get_user_by_username(user_name)
+    if not user:
+        return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
 
     try:
-        # Crear un nuevo registro en la base de datos (modelo VIN)
-        nuevo_vin = VIN(user=user, vin_completo=vin_completo)
+        nuevo_vin = VIN(user_id=user.id, vin_completo=vin_completo)
         db.session.add(nuevo_vin)
         db.session.commit()
         return jsonify({"message": "VIN guardado exitosamente"}), 200
     except Exception as e:
         db.session.rollback()
+        logger.error(f"Error al guardar VIN: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/ver_vins', methods=['GET'])
 def ver_vins():
-    user = request.args.get("user")
-    if not user:
+    """
+    Lista todos los VINs de un usuario dado por query param ?user=USERNAME
+    """
+    user_name = request.args.get("user")
+    if not user_name:
         return jsonify({"error": "Usuario no especificado"}), 400
 
+    user = get_user_by_username(user_name)
+    if not user:
+        return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
+
     try:
-        # Consulta los VINs del usuario en la base de datos
-        vins = VIN.query.filter_by(user=user).all()
+        # Accedemos a la relación user.vins (lazy=True) ya definida
+        vins = user.vins
         resultado = [
             {
                 "vin_completo": vin.vin_completo,
@@ -615,6 +468,7 @@ def ver_vins():
         ]
         return jsonify({"vins": resultado}), 200
     except Exception as e:
+        logger.error(f"Error al listar VINs: {e}")
         return jsonify({"error": str(e)}), 500
 
 # ============================
