@@ -221,6 +221,8 @@ def register():
     hashed_pw = bcrypt.hashpw(password.encode('utf-8'), salt)
     hashed_pw_str = hashed_pw.decode('utf-8')
 
+    print("DEBUG>>>", User, type(User), User.__module__)
+
     # Crear instancia del modelo
     new_user = User(username=username, password=hashed_pw_str)
     db.session.add(new_user)
@@ -432,6 +434,8 @@ def guardar_vin_endpoint():
     user = get_user_by_username(user_name)
     if not user:
         return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
+
+    print("DEBUG>>>", VIN, type(VIN), VIN.__module__)
 
     try:
         nuevo_vin = VIN(user_id=user.id, vin_completo=vin_completo)
