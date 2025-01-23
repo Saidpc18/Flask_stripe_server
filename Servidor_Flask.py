@@ -65,7 +65,10 @@ default_db_url = (
     f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
     f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
 )
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", "postgresql://postgres:woTCfdaWchoxcsKAmCaAxOBzHusEdLLj@junction.proxy.rlwy.net:19506/railway")
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
+    "DATABASE_URL",
+    "postgresql://postgres:woTCfdaWchoxcsKAmCaAxOBzHusEdLLj@junction.proxy.rlwy.net:19506/railway"
+)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -86,8 +89,6 @@ webhook_secret = os.getenv(
 if not webhook_secret:
     logger.error("El secreto del webhook no está configurado.")
     raise ValueError("Stripe Webhook Secret es obligatorio.")
-
-
 
 # ============================
 # ESQUEMA OPCIONAL PARA VALIDAR EVENTOS DE STRIPE
@@ -201,7 +202,6 @@ def renovar_licencia(usuario):
     conn.close()
     return True
 
-
 def obtener_y_actualizar_secuencial(username, year):
     """
     Obtiene y actualiza el secuencial del usuario, reiniciando si el año cambia.
@@ -234,8 +234,6 @@ def obtener_y_actualizar_secuencial(username, year):
     except Exception as e:
         logger.error(f"Error al actualizar el secuencial para {username}: {e}")
         raise
-
-
 
 # ============================
 # FUNCIONES PARA VINs (psycopg2)
@@ -327,7 +325,7 @@ def listar_vins(username):
     return vin_list
 
 # ============================
-# EJEMPLO DE MODELO CON SQLALCHEMY (para migraciones)
+# MODELOS SQLALCHEMY (para migraciones)
 # ============================
 class Subscription(db.Model):
     __tablename__ = 'subscriptions'
@@ -342,13 +340,21 @@ class Subscription(db.Model):
     def __repr__(self):
         return f"<Subscription {self.subscription_id} - {self.status}>"
 
+# IMPORTANTE: si tu tabla en PostgreSQL se llama exactamente "VIN" en mayúsculas,
+# debes especificarlo así (de lo contrario, SQLAlchemy podría crear/usar otra tabla):
+class VIN(db.Model):
+    __tablename__ = 'VIN'  # <-- Coincide con la tabla en mayúsculas
+    id = db.Column(db.Integer, primary_key=True)
+    user = db.Column(db.String(50), nullable=False)
+    vin_completo = db.Column(db.String(17), nullable=False)
+    created_at = db.Column(db.DateTime, default=db.func.now())
+
 # ============================
 # RUTAS
 # ============================
 @app.route("/")
 def home():
     return "Bienvenido a la API de VIN Builder"
-
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -357,6 +363,7 @@ def register():
     except Exception as e:
         logger.error(f"Error parseando JSON: {e}")
         return jsonify({"error": "JSON inválido"}), 400
+
     username = data.get("username")
     password = data.get("password")
 
@@ -368,7 +375,7 @@ def register():
     if username in usuarios:
         return jsonify({"error": "El usuario ya existe."}), 400
 
-    # Genera la sal y hazhea la contraseña
+    # Genera la sal y hashea la contraseña
     salt = bcrypt.gensalt()
     hashed_pw = bcrypt.hashpw(password.encode('utf-8'), salt)  # resultado es bytes
     hashed_pw_str = hashed_pw.decode('utf-8')  # se almacena como cadena
@@ -381,7 +388,7 @@ def register():
             INSERT INTO usuarios (username, password, license_expiration, secuencial)
             VALUES (%s, %s, %s, %s)
             """,
-            (username, hashed_pw_str, None, 0)  # Por ejemplo, sin licencia inicial y secuencial = 0
+            (username, hashed_pw_str, None, 0)
         )
         conn.commit()
         cur.close()
@@ -391,7 +398,6 @@ def register():
         return jsonify({"error": "Error al registrar el usuario"}), 500
 
     return jsonify({"message": "Usuario registrado exitosamente."}), 201
-
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -412,7 +418,6 @@ def login():
         return jsonify({"message": "Login exitoso"}), 200
     else:
         return jsonify({"error": "Contraseña incorrecta"}), 401
-
 
 # ============================
 # WEBHOOK DE STRIPE
@@ -570,15 +575,11 @@ def funcion_principal():
         return jsonify({"error": "Licencia expirada. Renueva para continuar usando la aplicación."}), 403
     return jsonify({"message": "Acceso permitido a la función principal."})
 
-
-
-class VIN(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user = db.Column(db.String(50), nullable=False)
-    vin_completo = db.Column(db.String(17), nullable=False)  # Almacena el VIN completo
-    created_at = db.Column(db.DateTime, default=db.func.now())  # Fecha de creación
+# ============================
+# ENDPOINTS PARA VIN
+# ============================
 @app.route('/guardar_vin', methods=['POST'])
-def guardar_vin():
+def guardar_vin_endpoint():
     data = request.json
     user = data.get("user")
     vin_completo = data.get("vin_completo")  # Obtener el VIN completo del payload
@@ -587,7 +588,7 @@ def guardar_vin():
         return jsonify({"error": "Faltan datos necesarios"}), 400
 
     try:
-        # Crear un nuevo registro en la base de datos
+        # Crear un nuevo registro en la base de datos (modelo VIN)
         nuevo_vin = VIN(user=user, vin_completo=vin_completo)
         db.session.add(nuevo_vin)
         db.session.commit()
@@ -615,7 +616,6 @@ def ver_vins():
         return jsonify({"vins": resultado}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 # ============================
 # PUNTO DE ENTRADA
