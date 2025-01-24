@@ -2,7 +2,7 @@ import tkinter as tk
 import requests  # Para enviar solicitudes HTTP al servidor Flask
 import webbrowser  # Para abrir la URL de Stripe en el navegador
 from tkinter import ttk, messagebox
-from Servidor_Flask import obtener_y_actualizar_secuencial
+from Servidor_Flask import obtener_o_actualizar_secuencial
 
 
 # ============================
@@ -451,7 +451,7 @@ class VINBuilderApp:
 
         try:
             # Obtener y actualizar el secuencial
-            sec = obtener_y_actualizar_secuencial(self.usuario_actual, c10)
+            sec = obtener_o_actualizar_secuencial(self.usuario_actual, c10)
         except Exception as e:
             messagebox.showerror("Error", f"Error al actualizar el secuencial: {e}")
             return
