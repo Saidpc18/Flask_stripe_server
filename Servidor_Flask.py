@@ -147,6 +147,24 @@ class Subscription(db.Model):
     def __repr__(self):
         return f"<Subscription {self.subscription_id} - {self.status}>"
 
+
+class YearSequence(db.Model):
+    __tablename__ = 'year_sequences'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('usuarios.id'), nullable=False)
+    year = db.Column(db.Integer, nullable=False)
+    secuencial = db.Column(db.Integer, default=1)
+
+    # Asegura que no existan duplicados (user_id, year)
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'year', name='uq_user_year'),
+    )
+
+    def __repr__(self):
+        return f"<YearSequence user_id={self.user_id}, year={self.year}, secuencial={self.secuencial}>"
+
+
 # ============================
 # FUNCIONES AUXILIARES / LÓGICA DE NEGOCIO
 # ============================
@@ -188,6 +206,44 @@ def update_secuencial(user: User, year: int) -> int:
         user.secuencial = user.secuencial + 1 if user.secuencial < 999 else 1
     db.session.commit()
     return user.secuencial
+
+def obtener_o_incrementar_secuencial(username: str, year: int) -> int:
+    """
+    Devuelve el secuencial para (username, year).
+    - Si no existe un registro, lo crea con secuencial=1 y retorna 1.
+    - Si existe, incrementa el secuencial (1..999). Si está en 999, regresa a 1.
+    - Retorna el nuevo valor.
+    """
+    # 1) Buscar el usuario
+    user = get_user_by_username(username)
+    if not user:
+        # Maneja el caso de usuario inexistente
+        logger.warning(f"Usuario {username} no existe.")
+        return 0
+
+    # 2) Buscar si existe un registro en year_sequences
+    year_seq = YearSequence.query.filter_by(user_id=user.id, year=year).first()
+
+    if not year_seq:
+        # 3a) Si no existe, creamos uno con secuencial=1
+        year_seq = YearSequence(
+            user_id=user.id,
+            year=year,
+            secuencial=1
+        )
+        db.session.add(year_seq)
+        db.session.commit()
+        return 1
+    else:
+        # 3b) Si existe, incrementa o reinicia a 1 si está en 999
+        if year_seq.secuencial >= 999:
+            year_seq.secuencial = 1
+        else:
+            year_seq.secuencial += 1
+
+        db.session.commit()
+        return year_seq.secuencial
+
 
 # ============================
 # RUTAS
@@ -260,6 +316,28 @@ def login():
         return jsonify({"message": "Login exitoso"}), 200
     else:
         return jsonify({"error": "Contraseña incorrecta"}), 401
+
+
+@app.route('/obtener_secuencial', methods=['POST'])
+def obtener_secuencial():
+    """
+    Endpoint para obtener el siguiente secuencial de un usuario por año.
+    JSON esperado: {"user": "username", "year": 2025}
+    """
+    data = request.json
+    username = data.get("user")
+    year = data.get("year")
+
+    if not username or not year:
+        return jsonify({"error": "Se requiere 'user' y 'year'"}), 400
+
+    try:
+        nuevo_secuencial = obtener_o_incrementar_secuencial(username, int(year))
+        return jsonify({"secuencial": nuevo_secuencial}), 200
+    except Exception as e:
+        logger.error(f"Error al obtener secuencial: {e}")
+        return jsonify({"error": "Error al obtener el secuencial"}), 500
+
 
 # ============================
 # WEBHOOK DE STRIPE
