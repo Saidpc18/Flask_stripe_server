@@ -2,7 +2,7 @@ import tkinter as tk
 import requests  # Para enviar solicitudes HTTP al servidor Flask
 import webbrowser  # Para abrir la URL de Stripe en el navegador
 from tkinter import ttk, messagebox
-
+from Servidor_Flask import obtener_y_actualizar_secuencial
 
 
 # ============================
