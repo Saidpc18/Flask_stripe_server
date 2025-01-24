@@ -423,6 +423,7 @@ def funcion_principal():
 # ============================
 @app.route('/guardar_vin', methods=['POST'])
 def guardar_vin_endpoint():
+    
     print("DEBUG>>> VIN class:", VIN, type(VIN), VIN.__module__)
     print("DEBUG>>> VIN columns:", VIN.__table__.columns.keys())
 
