@@ -1,7 +1,8 @@
-import tkinter as tk
 import requests
 import webbrowser
-from tkinter import ttk, messagebox
+import ttkbootstrap as tb
+from ttkbootstrap.constants import *
+from tkinter import messagebox
 
 # ============================
 #   CATÁLOGOS (LOCALES)
@@ -76,61 +77,43 @@ posicion_11 = {
     "Ex Hacienda la Honda, Zacatecas, México": "A"
 }
 
-catalogos = {
-    "posicion_4": posicion_4,
-    "posicion_5": posicion_5,
-    "posicion_6": posicion_6,
-    "posicion_7": posicion_7,
-    "posicion_8": posicion_8,
-    "posicion_10": posicion_10,
-    "posicion_11": posicion_11,
-}
-
-
 class VINBuilderApp:
-    def __init__(self, master):
+    def __init__(self, master: tb.Window):
         self.master = master
-        self.master.title("VIN Builder - con PostgreSQL")
+        self.master.title("VIN Builder - con PostgreSQL (ttkbootstrap)")
 
-        # Pantalla maximizada en Windows (en otros SO puede que no funcione igual)
+        # Ocupa casi toda la pantalla
         self.master.state("zoomed")
 
-        # --------- ESTILO MODERNO EN TTK -----------
-        style = ttk.Style()
-        # Prueba "vista" en Windows (más moderno).
-        # Para Linux/macOS, a veces "clam" o "default" funciona mejor.
-        style.theme_use("vista")
-
-        self.main_frame = ttk.Frame(self.master)
-        self.main_frame.pack(fill="both", expand=True)
-
-        # Variables de OptionMenu + WMI
-        self.var_wmi = tk.StringVar(value="3J9")
-        self.var_c4 = tk.StringVar()
-        self.var_c5 = tk.StringVar()
-        self.var_c6 = tk.StringVar()
-        self.var_c7 = tk.StringVar()
-        self.var_c8 = tk.StringVar()
-        self.var_c10 = tk.StringVar()
-        self.var_c11 = tk.StringVar()
+        # Variables
+        self.var_wmi = tb.StringVar(value="3J9")
+        self.var_c4 = tb.StringVar()
+        self.var_c5 = tb.StringVar()
+        self.var_c6 = tb.StringVar()
+        self.var_c7 = tb.StringVar()
+        self.var_c8 = tb.StringVar()
+        self.var_c10 = tb.StringVar()
+        self.var_c11 = tb.StringVar()
 
         self.usuario_actual = None
         self.result_label = None
 
+        # Frame principal
+        self.main_frame = tb.Frame(self.master, padding=20)
+        self.main_frame.pack(fill="both", expand=True)
+
         self.mostrar_ventana_inicio()
 
-    # =============================================
-    #        MÉTODOS PARA CONECTAR CON FLASK
-    # =============================================
+    # ============================
+    #   LLAMADAS AL SERVIDOR
+    # ============================
     def iniciar_pago(self):
-        """Renovar licencia vía /create-checkout-session."""
         if not self.usuario_actual:
             messagebox.showerror("Error", "Inicia sesión para realizar el pago.")
             return
         try:
             server_url = "https://flask-stripe-server.onrender.com/create-checkout-session"
             response = requests.post(server_url, json={"user": self.usuario_actual})
-
             if response.status_code == 200:
                 data = response.json()
                 if "url" in data:
@@ -138,29 +121,21 @@ class VINBuilderApp:
                     messagebox.showinfo("Pago Iniciado",
                                         "Se abrió la página de pago en tu navegador.")
                 else:
-                    messagebox.showerror("Error",
-                                         "No se recibió una URL válida del servidor.")
+                    messagebox.showerror("Error", "No se recibió una URL válida del servidor.")
             else:
-                error_msg = response.json().get("error", "Error desconocido")
+                err = response.json().get("error", "Error desconocido")
                 messagebox.showerror("Error",
-                                     f"No se pudo iniciar el proceso de pago: {error_msg}")
+                                     f"No se pudo iniciar el proceso de pago: {err}")
         except requests.RequestException as e:
             messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
 
     def verificar_licencia(self):
-        """
-        Llama a /funcion-principal para ver si la licencia está activa.
-        Retorna True o False.
-        """
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return False
-
         try:
-            response = requests.get(
-                "https://flask-stripe-server.onrender.com/funcion-principal",
-                params={"user": self.usuario_actual}
-            )
+            url = "https://flask-stripe-server.onrender.com/funcion-principal"
+            response = requests.get(url, params={"user": self.usuario_actual})
             data = response.json()
             if response.status_code == 403 or "error" in data:
                 msg = data.get("error", "Licencia inválida.")
@@ -171,8 +146,7 @@ class VINBuilderApp:
             messagebox.showerror("Error", f"No se pudo verificar la licencia: {e}")
             return False
 
-    def guardar_vin_en_flask(self, vin_data):
-        """Guarda el VIN en la base de datos de Flask por /guardar_vin."""
+    def guardar_vin_en_flask(self, vin_data: dict):
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
@@ -184,14 +158,12 @@ class VINBuilderApp:
             if resp.status_code == 200:
                 messagebox.showinfo("Éxito", "VIN guardado en PostgreSQL.")
             else:
-                data = resp.json()
-                err = data.get("error", "Error desconocido")
+                err = resp.json().get("error", "Error desconocido")
                 messagebox.showerror("Error", f"No se pudo guardar el VIN: {err}")
         except requests.RequestException as e:
             messagebox.showerror("Error", f"Error al conectarse al servidor Flask: {e}")
 
     def ver_vins_en_flask(self):
-        """Devuelve la lista de VINs del usuario en la BD de Flask."""
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return []
@@ -203,39 +175,71 @@ class VINBuilderApp:
                 return data.get("vins", [])
             else:
                 err = resp.json().get("error", "Error desconocido")
-                messagebox.showerror("Error", f"No se pudo obtener la lista de VINs: {err}")
+                messagebox.showerror("Error", f"No se pudo obtener VINs: {err}")
                 return []
         except requests.RequestException as e:
-            messagebox.showerror("Error", f"Error al conectarse al servidor Flask: {e}")
+            messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
             return []
 
-    # =============================================
-    #         VENTANAS DE INICIO / LOGIN
-    # =============================================
+    def obtener_secuencial_desde_servidor(self, year_code):
+        """
+        Llama a /obtener_secuencial en Flask y retorna el secuencial (int).
+        """
+        url = "https://flask-stripe-server.onrender.com/obtener_secuencial"
+        payload = {"user": self.usuario_actual, "year": year_code}
+        try:
+            resp = requests.post(url, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("secuencial", 0)
+            else:
+                err = resp.json().get("error", "Error desconocido")
+                messagebox.showerror("Error", f"Error al obtener secuencial: {err}")
+                return 0
+        except requests.RequestException as e:
+            messagebox.showerror("Error", f"No se pudo conectar a /obtener_secuencial: {e}")
+            return 0
+
+    # ============================
+    #       VENTANAS
+    # ============================
     def mostrar_ventana_inicio(self):
         self.limpiar_main_frame()
 
-        lbl = ttk.Label(self.main_frame, text="Bienvenido a VIN Builder",
-                        font=("Arial", 16, "bold"))
+        # Centramos los widgets en un Frame interno
+        container = tb.Frame(self.main_frame, padding=40)
+        container.pack(expand=True)
+
+        lbl = tb.Label(container, text="Bienvenido a VIN Builder",
+                       font=("Helvetica", 22, "bold"))
         lbl.pack(pady=20)
 
-        ttk.Button(self.main_frame, text="Crear Cuenta",
-                   command=self.ventana_crear_cuenta).pack(pady=5)
-        ttk.Button(self.main_frame, text="Iniciar Sesión",
-                   command=self.ventana_iniciar_sesion).pack(pady=5)
+        btn_crear = tb.Button(container, text="Crear Cuenta", bootstyle=PRIMARY,
+                              command=self.ventana_crear_cuenta)
+        btn_crear.pack(pady=10, ipadx=10)
+
+        btn_login = tb.Button(container, text="Iniciar Sesión", bootstyle=INFO,
+                              command=self.ventana_iniciar_sesion)
+        btn_login.pack(pady=10, ipadx=10)
 
     def ventana_crear_cuenta(self):
         self.limpiar_main_frame()
 
-        ttk.Label(self.main_frame, text="Crear Cuenta",
-                  font=("Arial", 14, "bold")).pack(pady=10)
+        container = tb.Frame(self.main_frame, padding=40)
+        container.pack(expand=True)
 
-        ttk.Label(self.main_frame, text="Usuario:").pack()
-        entry_reg_user = ttk.Entry(self.main_frame)
+        lbl_title = tb.Label(container, text="Crear Cuenta",
+                             font=("Helvetica", 20, "bold"))
+        lbl_title.pack(pady=10)
+
+        lbl_user = tb.Label(container, text="Usuario:", font=("Helvetica", 14))
+        lbl_user.pack(pady=5)
+        entry_reg_user = tb.Entry(container, font=("Helvetica", 14), width=25)
         entry_reg_user.pack()
 
-        ttk.Label(self.main_frame, text="Contraseña:").pack()
-        entry_reg_pass = ttk.Entry(self.main_frame, show="*")
+        lbl_pass = tb.Label(container, text="Contraseña:", font=("Helvetica", 14))
+        lbl_pass.pack(pady=5)
+        entry_reg_pass = tb.Entry(container, show="*", font=("Helvetica", 14), width=25)
         entry_reg_pass.pack()
 
         def do_register():
@@ -260,22 +264,32 @@ class VINBuilderApp:
             except requests.RequestException as e:
                 messagebox.showerror("Error", f"Error al conectarse con el servidor: {e}")
 
-        ttk.Button(self.main_frame, text="Registrar", command=do_register).pack(pady=10)
-        ttk.Button(self.main_frame, text="Volver",
-                   command=self.mostrar_ventana_inicio).pack(pady=5)
+        btn_reg = tb.Button(container, text="Registrar", bootstyle=SUCCESS,
+                            command=do_register)
+        btn_reg.pack(pady=10, ipadx=10)
+
+        btn_volver = tb.Button(container, text="Volver", bootstyle=SECONDARY,
+                               command=self.mostrar_ventana_inicio)
+        btn_volver.pack(pady=5, ipadx=10)
 
     def ventana_iniciar_sesion(self):
         self.limpiar_main_frame()
 
-        ttk.Label(self.main_frame, text="Iniciar Sesión",
-                  font=("Arial", 14, "bold")).pack(pady=10)
+        container = tb.Frame(self.main_frame, padding=40)
+        container.pack(expand=True)
 
-        ttk.Label(self.main_frame, text="Usuario:").pack()
-        entry_user = ttk.Entry(self.main_frame)
+        lbl_title = tb.Label(container, text="Iniciar Sesión",
+                             font=("Helvetica", 20, "bold"))
+        lbl_title.pack(pady=10)
+
+        lbl_user = tb.Label(container, text="Usuario:", font=("Helvetica", 14))
+        lbl_user.pack(pady=5)
+        entry_user = tb.Entry(container, font=("Helvetica", 14), width=25)
         entry_user.pack()
 
-        ttk.Label(self.main_frame, text="Contraseña:").pack()
-        entry_pass = ttk.Entry(self.main_frame, show="*")
+        lbl_pass = tb.Label(container, text="Contraseña:", font=("Helvetica", 14))
+        lbl_pass.pack(pady=5)
+        entry_pass = tb.Entry(container, show="*", font=("Helvetica", 14), width=25)
         entry_pass.pack()
 
         def do_login():
@@ -300,129 +314,93 @@ class VINBuilderApp:
             except requests.RequestException as e:
                 messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
 
-        ttk.Button(self.main_frame, text="Iniciar Sesión",
-                   command=do_login).pack(pady=10)
-        ttk.Button(self.main_frame, text="Volver",
-                   command=self.mostrar_ventana_inicio).pack()
+        btn_login = tb.Button(container, text="Iniciar Sesión", bootstyle=PRIMARY,
+                              command=do_login)
+        btn_login.pack(pady=10, ipadx=10)
 
-    # =============================================
-    #       VENTANA PRINCIPAL (POST-LOGIN)
-    # =============================================
+        btn_volver = tb.Button(container, text="Volver", bootstyle=SECONDARY,
+                               command=self.mostrar_ventana_inicio)
+        btn_volver.pack(pady=5, ipadx=10)
+
     def ventana_principal(self):
         self.limpiar_main_frame()
 
-        self.left_frame = ttk.Frame(self.main_frame)
+        # Frames
+        self.left_frame = tb.Frame(self.main_frame, padding=20)
         self.left_frame.pack(side="left", fill="both", expand=True)
 
-        self.right_frame = ttk.Frame(self.main_frame)
+        self.right_frame = tb.Frame(self.main_frame, padding=20)
         self.right_frame.pack(side="right", fill="both", expand=True)
 
-        titulo = ttk.Label(self.main_frame,
-                           text=f"Hola, {self.usuario_actual}",
-                           font=("Arial", 14, "bold"))
-        titulo.pack(pady=10)
+        lbl_title = tb.Label(self.main_frame,
+                             text=f"Hola, {self.usuario_actual}",
+                             font=("Helvetica", 16, "bold"))
+        lbl_title.pack(pady=10)
 
-        ttk.Label(self.left_frame, text="Generar VIN",
-                  font=("Arial", 12, "underline")).pack(pady=5)
+        tb.Label(self.left_frame, text="Generar VIN",
+                 font=("Helvetica", 14, "underline")).pack(pady=5)
 
-        ttk.Label(self.left_frame, text="Código WMI:").pack()
-        ttk.Entry(self.left_frame, textvariable=self.var_wmi).pack()
+        tb.Label(self.left_frame, text="Código WMI:", font=("Helvetica", 12)).pack()
+        tb.Entry(self.left_frame, textvariable=self.var_wmi, font=("Helvetica", 12), width=10).pack()
 
         self.crear_optionmenus(self.left_frame)
 
-        ttk.Button(self.right_frame, text="Generar VIN",
-                   command=self.generar_vin).pack(pady=10)
+        tb.Button(self.right_frame, text="Generar VIN", bootstyle=PRIMARY,
+                  command=self.generar_vin).pack(pady=10, ipadx=5)
 
-        self.result_label = ttk.Label(self.right_frame, text="VIN/NIV: ")
+        self.result_label = tb.Label(self.right_frame, text="VIN/NIV: ", font=("Helvetica", 12))
         self.result_label.pack(pady=5)
 
-        ttk.Button(self.right_frame, text="Renovar Licencia",
-                   command=self.iniciar_pago).pack(pady=10)
+        tb.Button(self.right_frame, text="Renovar Licencia", bootstyle=SUCCESS,
+                  command=self.iniciar_pago).pack(pady=10, ipadx=5)
 
-        ttk.Button(self.right_frame, text="Ver VINs Generados",
-                   command=self.ventana_lista_vins).pack(pady=5)
+        tb.Button(self.right_frame, text="Ver VINs Generados", bootstyle=INFO,
+                  command=self.ventana_lista_vins).pack(pady=5, ipadx=5)
 
-        ttk.Button(self.right_frame, text="Cerrar Sesión",
-                   command=self.cerrar_sesion).pack(pady=10)
+        tb.Button(self.right_frame, text="Cerrar Sesión", bootstyle=DANGER,
+                  command=self.cerrar_sesion).pack(pady=10, ipadx=5)
 
     def crear_optionmenus(self, parent):
-        ttk.Label(parent, text="Pos.4 (Modelo):").pack()
-        self.menu_c4 = ttk.OptionMenu(
-            parent,
-            self.var_c4,
-            self.valor_inicial(posicion_4),
-            *posicion_4.keys()
-        )
+        # Helper para OptionMenus
+        def valor_inicial(dic):
+            return list(dic.keys())[0] if dic else ""
+
+        # Pos.4
+        tb.Label(parent, text="Pos.4 (Modelo):", font=("Helvetica", 12)).pack()
+        self.menu_c4 = tb.OptionMenu(parent, self.var_c4, valor_inicial(posicion_4), *posicion_4.keys())
         self.menu_c4.pack()
 
-        ttk.Label(parent, text="Pos.5:").pack()
-        self.menu_c5 = ttk.OptionMenu(
-            parent,
-            self.var_c5,
-            self.valor_inicial(posicion_5),
-            *posicion_5.keys()
-        )
+        # Pos.5
+        tb.Label(parent, text="Pos.5:", font=("Helvetica", 12)).pack()
+        self.menu_c5 = tb.OptionMenu(parent, self.var_c5, valor_inicial(posicion_5), *posicion_5.keys())
         self.menu_c5.pack()
 
-        ttk.Label(parent, text="Pos.6:").pack()
-        self.menu_c6 = ttk.OptionMenu(
-            parent,
-            self.var_c6,
-            self.valor_inicial(posicion_6),
-            *posicion_6.keys()
-        )
+        # Pos.6
+        tb.Label(parent, text="Pos.6:", font=("Helvetica", 12)).pack()
+        self.menu_c6 = tb.OptionMenu(parent, self.var_c6, valor_inicial(posicion_6), *posicion_6.keys())
         self.menu_c6.pack()
 
-        ttk.Label(parent, text="Pos.7:").pack()
-        self.menu_c7 = ttk.OptionMenu(
-            parent,
-            self.var_c7,
-            self.valor_inicial(posicion_7),
-            *posicion_7.keys()
-        )
+        # Pos.7
+        tb.Label(parent, text="Pos.7:", font=("Helvetica", 12)).pack()
+        self.menu_c7 = tb.OptionMenu(parent, self.var_c7, valor_inicial(posicion_7), *posicion_7.keys())
         self.menu_c7.pack()
 
-        ttk.Label(parent, text="Pos.8:").pack()
-        self.menu_c8 = ttk.OptionMenu(
-            parent,
-            self.var_c8,
-            self.valor_inicial(posicion_8),
-            *posicion_8.keys()
-        )
+        # Pos.8
+        tb.Label(parent, text="Pos.8:", font=("Helvetica", 12)).pack()
+        self.menu_c8 = tb.OptionMenu(parent, self.var_c8, valor_inicial(posicion_8), *posicion_8.keys())
         self.menu_c8.pack()
 
-        ttk.Label(parent, text="Pos.10 (Año):").pack()
-        self.menu_c10 = ttk.OptionMenu(
-            parent,
-            self.var_c10,
-            self.valor_inicial(posicion_10),
-            *posicion_10.keys()
-        )
+        # Pos.10
+        tb.Label(parent, text="Pos.10 (Año):", font=("Helvetica", 12)).pack()
+        self.menu_c10 = tb.OptionMenu(parent, self.var_c10, valor_inicial(posicion_10), *posicion_10.keys())
         self.menu_c10.pack()
 
-        ttk.Label(parent, text="Pos.11 (Planta):").pack()
-        self.menu_c11 = ttk.OptionMenu(
-            parent,
-            self.var_c11,
-            self.valor_inicial(posicion_11),
-            *posicion_11.keys()
-        )
+        # Pos.11
+        tb.Label(parent, text="Pos.11 (Planta):", font=("Helvetica", 12)).pack()
+        self.menu_c11 = tb.OptionMenu(parent, self.var_c11, valor_inicial(posicion_11), *posicion_11.keys())
         self.menu_c11.pack()
 
-    def valor_inicial(self, dic):
-        if dic:
-            return list(dic.keys())[0]
-        return ""
-
     def generar_vin(self):
-        """
-        Genera VIN localmente (módulo 9, etc.) y pide
-        secuencial localmente con from Servidor_Flask,
-        OJO: Estás llamando a local 'obtener_o_incrementar_secuencial',
-        si vas con enfoque A (puro HTTP),
-        deberías pedirlo a /obtener_secuencial
-        en tu servidor Flask.
-        """
         if not self.verificar_licencia():
             return
         if not self.usuario_actual:
@@ -442,17 +420,13 @@ class VINBuilderApp:
             messagebox.showerror("Error", "Faltan datos en uno de los catálogos.")
             return
 
-        # ---- Cambiar la lógica "local" por un request a /obtener_secuencial,
-        # para respetar el ENFOQUE A.
-        # *Ejemplo*
+        # Llamamos a /obtener_secuencial en Flask
         sec = self.obtener_secuencial_desde_servidor(c10)
         if sec == 0:
-            return  # ya mostré error adentro
+            return  # se manejó el error en la función
 
         sec_str = str(sec).zfill(3)
         fixed_12_14 = "098"
-
-        # Calcular pos9
         valores = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{fixed_12_14}{sec_str}"
         pos9 = self.calcular_posicion_9(valores)
 
@@ -475,32 +449,14 @@ class VINBuilderApp:
         self.guardar_vin_en_flask(vin_data)
 
         if self.result_label:
-            self.result_label.config(text=f"VIN/NIV: {vin_completo}", font=("Arial", 24, "bold"))
+            self.result_label.config(text=f"VIN/NIV: {vin_completo}", font=("Helvetica", 24, "bold"))
         else:
-            self.result_label = ttk.Label(self.right_frame, text=f"VIN/NIV: {vin_completo}",
-                                          font=("Arial", 24, "bold"))
+            self.result_label = tb.Label(self.right_frame, text=f"VIN/NIV: {vin_completo}",
+                                         font=("Helvetica", 24, "bold"))
             self.result_label.pack(pady=5)
 
-    def obtener_secuencial_desde_servidor(self, year_code):
-        """
-        Llama a /obtener_secuencial en Flask y retorna el secuencial (int).
-        """
-        url = "https://flask-stripe-server.onrender.com/obtener_secuencial"
-        payload = {"user": self.usuario_actual, "year": year_code}
-        try:
-            resp = requests.post(url, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                return data.get("secuencial", 0)
-            else:
-                err = resp.json().get("error", "Error desconocido")
-                messagebox.showerror("Error", f"Error al obtener secuencial: {err}")
-                return 0
-        except requests.RequestException as e:
-            messagebox.showerror("Error", f"No se pudo conectar a /obtener_secuencial: {e}")
-            return 0
-
     def calcular_posicion_9(self, valores):
+        # Cálculo módulo 11
         sustituciones = {
             "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
             "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9, "S": 2,
@@ -518,17 +474,19 @@ class VINBuilderApp:
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
+
         vins = self.ver_vins_en_flask()
-        vins_window = tk.Toplevel(self.master)
+        vins_window = tb.Toplevel(self.master)
         vins_window.title("VINs Generados")
         vins_window.geometry("500x400")
 
-        canvas = tk.Canvas(vins_window)
-        scrollbar = ttk.Scrollbar(vins_window, orient="vertical", command=canvas.yview)
-        scroll_frame = ttk.Frame(canvas)
+        canvas = tb.Canvas(vins_window)
+        scrollbar = tb.Scrollbar(vins_window, orient="vertical", command=canvas.yview)
 
+        scroll_frame = tb.Frame(canvas)
         scroll_frame.bind("<Configure>",
                           lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
         canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
 
@@ -538,8 +496,10 @@ class VINBuilderApp:
             fecha_crea = vin.get("created_at", "")
             texto_vins += f"VIN Completo: {vin_completo}\nCreado: {fecha_crea}\n" + ("-"*40 + "\n")
 
-        ttk.Label(scroll_frame, text=texto_vins, justify=tk.LEFT,
-                  font=("Arial", 14, "bold")).pack(pady=10)
+        lbl_text = tb.Label(scroll_frame, text=texto_vins,
+                            justify="left", font=("Helvetica", 12, "bold"))
+        lbl_text.pack(pady=10)
+
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
@@ -553,8 +513,9 @@ class VINBuilderApp:
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    root.title("VIN Builder - Enfoque A (HTTP Flask)")
-    # Crea la app
-    app = VINBuilderApp(root)
-    root.mainloop()
+    # Crea una ventana con ttkbootstrap, aplicando un tema moderno
+    app_tk = tb.Window(themename="cosmo")
+    app_tk.title("VIN Builder - ttkbootstrap Edition")
+    # Instancia nuestra app
+    VINBuilderApp(app_tk)
+    app_tk.mainloop()
