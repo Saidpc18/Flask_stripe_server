@@ -213,10 +213,10 @@ def obtener_o_incrementar_secuencial(username: str, year: int) -> int:
 # ============================
 YEAR_MAP = {
     "R": 2024,  # para 2024
-    # Añade más si lo requieres, e.g.
-    # "S": 2025,
-    # "T": 2026,
-}
+    "S": 2025,
+    "T": 2026,
+    "V": 2027,
+    "W": 2028,
 
 
 # ============================
