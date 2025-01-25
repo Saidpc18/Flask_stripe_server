@@ -514,7 +514,7 @@ class VINBuilderApp:
 
 if __name__ == "__main__":
     # Crea una ventana con ttkbootstrap, aplicando un tema moderno
-    app_tk = tb.Window(themename="litera")
+    app_tk = tb.Window(themename="sandstone")
     app_tk.title("VIN Builder - ttkbootstrap Edition")
     # Instancia nuestra app
     VINBuilderApp(app_tk)
