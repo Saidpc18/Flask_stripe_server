@@ -526,3 +526,48 @@ class VINBuilderApp:
 
         vins = self.ver_vins_en_flask()
         vins_window = tk.Toplevel(self.master)
+        vins_window.title("VINs Generados")
+        vins_window.geometry("500x400")
+
+        canvas = tk.Canvas(vins_window)
+        scrollbar = ttk.Scrollbar(vins_window, orient="vertical", command=canvas.yview)
+        scroll_frame = ttk.Frame(canvas)
+
+        scroll_frame.bind("<Configure>",
+                          lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        texto_vins = ""
+        for vin in vins:
+            # Asegúrate de que `vin_completo` esté incluido en los datos recuperados
+            vin_completo = vin.get("vin_completo", "VIN no disponible")
+            texto_vins += f"VIN Completo: {vin_completo}\n"
+            fecha_crea = vin.get("created_at", "")
+            texto_vins += f"Creado: {fecha_crea}\n"
+            texto_vins += "-" * 40 + "\n"
+
+        ttk.Label(scroll_frame, text=texto_vins, justify=tk.LEFT, font=("Arial", 14, "bold")).pack(pady=10)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+    def limpiar_main_frame(self):
+        for w in self.main_frame.winfo_children():
+            w.destroy()
+
+    def cerrar_sesion(self):
+        self.usuario_actual = None
+        self.mostrar_ventana_inicio()
+
+    def ventana_editar_tablas(self):
+        # Método existente para editar catálogos (local)
+        pass
+
+
+# ============================
+#  PUNTO DE ENTRADA
+# ============================
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = VINBuilderApp(root)
+    root.mainloop()
