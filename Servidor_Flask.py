@@ -61,6 +61,8 @@ default_db_url = (
     f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
 )
 
+print(default_db_url)
+
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
     "DATABASE_URL",
     default_db_url  # Por si no está definida DATABASE_URL en el entorno

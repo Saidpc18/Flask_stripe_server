@@ -125,6 +125,15 @@ class VINBuilderApp:
     # -----------------------------------------------------
     #  FUNCIONES QUE SE COMUNICAN CON EL SERVIDOR FLASK
     # -----------------------------------------------------
+
+    YEAR_LETTER_MAP = {
+        "R": 2024,  # ejemplo
+        "S": 2025,
+        # Agrega otras letras y años según tu lógica
+        # "T": 2026,
+        # ...
+    }
+
     def iniciar_pago(self):
         """Conecta con Flask (/create-checkout-session) para renovar licencia."""
         if not self.usuario_actual:
