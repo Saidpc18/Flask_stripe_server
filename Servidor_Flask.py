@@ -10,6 +10,7 @@ import stripe
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
+
 print("DEBUG FILE:", __file__)
 
 # ============================
@@ -20,7 +21,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("app.log"),  # Logs en archivo
-        logging.StreamHandler()  # Logs en consola
+        logging.StreamHandler()          # Logs en consola
     ]
 )
 logger = logging.getLogger(__name__)
@@ -87,6 +88,14 @@ class StripeEventSchema(Schema):
 
 
 # ============================
+# DICCIONARIO DE LETRAS → AÑO
+# ============================
+YEAR_MAP = {
+    "R": 2024,  # Por ejemplo "R" => 2024
+    # Agrega más equivalencias si las necesitas
+}
+
+# ============================
 # MODELOS SQLALCHEMY
 # ============================
 class User(db.Model):
@@ -149,17 +158,15 @@ class YearSequence(db.Model):
 
 
 # ============================
-# FUNCIONES AUXILIARES
+# FUNCIONES AUXILIARES / LÓGICA DE NEGOCIO
 # ============================
 def get_user_by_username(username):
     return User.query.filter_by(username=username).first()
-
 
 def license_is_active(user: User) -> bool:
     if not user or not user.license_expiration:
         return False
     return user.license_expiration > datetime.now()
-
 
 def renew_license(user: User) -> bool:
     if not user:
@@ -168,31 +175,49 @@ def renew_license(user: User) -> bool:
     db.session.commit()
     return True
 
-
-def update_secuencial(user: User, year: int) -> int:
+def update_secuencial(user: User, year_input) -> int:
+    """
+    Ajustado: 'year_input' puede ser 'R' (u otra letra) o un entero.
+    """
     if not user:
         return 0
-    if user.last_year != year:
+
+    # Convertir 'year_input' a entero si es letra
+    if isinstance(year_input, str) and year_input in YEAR_MAP:
+        year_int = YEAR_MAP[year_input]
+    else:
+        year_int = int(year_input)
+
+    if user.last_year != year_int:
         user.secuencial = 1
-        user.last_year = year
+        user.last_year = year_int
     else:
         user.secuencial = user.secuencial + 1 if user.secuencial < 999 else 1
+
     db.session.commit()
     return user.secuencial
 
 
-def obtener_o_incrementar_secuencial(username: str, year: int) -> int:
+def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
+    """
+    year_input puede ser letra o número. Se convierte antes de consultar la BD.
+    """
     user = get_user_by_username(username)
     if not user:
         logger.warning(f"Usuario {username} no existe.")
         return 0
 
-    year_seq = YearSequence.query.filter_by(user_id=user.id, year=year).first()
+    if isinstance(year_input, str) and year_input in YEAR_MAP:
+        year_int = YEAR_MAP[year_input]
+    else:
+        year_int = int(year_input)
+
+    year_seq = YearSequence.query.filter_by(user_id=user.id, year=year_int).first()
 
     if not year_seq:
         year_seq = YearSequence(
             user_id=user.id,
-            year=year,
+            year=year_int,
             secuencial=1
         )
         db.session.add(year_seq)
@@ -206,17 +231,6 @@ def obtener_o_incrementar_secuencial(username: str, year: int) -> int:
 
         db.session.commit()
         return year_seq.secuencial
-
-
-# ============================
-# DICCIONARIO DE LETRAS → AÑO (ejemplo)
-# ============================
-YEAR_MAP = {
-    "R": 2024,  # para 2024
-    "S": 2025,
-    "T": 2026,
-    "V": 2027,
-    "W": 2028,}
 
 
 # ============================
@@ -283,9 +297,7 @@ def login():
 @app.route('/obtener_secuencial', methods=['POST'])
 def obtener_secuencial():
     """
-    Endpoint para obtener el siguiente secuencial de un usuario por año.
-    Puede recibir year como número (2024) o letra (e.g. "R" => 2024).
-
+    Puede recibir year como un entero o una letra "R".
     JSON esperado: {"user": "username", "year": "R"} o {"year": 2024}
     """
     data = request.json
@@ -295,21 +307,8 @@ def obtener_secuencial():
     if not username or not year_value:
         return jsonify({"error": "Se requiere 'user' y 'year'"}), 400
 
-    # Intentamos convertir la letra a año si existe en YEAR_MAP
-    # De lo contrario, int(...) para pasarlo a entero.
     try:
-        if isinstance(year_value, str) and year_value in YEAR_MAP:
-            # "R" => 2024
-            year_int = YEAR_MAP[year_value]
-        else:
-            # Convertir year_value a entero directamente
-            year_int = int(year_value)
-    except ValueError:
-        # Si falla la conversión
-        return jsonify({"error": f"Valor de 'year' inválido: {year_value}"}), 400
-
-    try:
-        nuevo_secuencial = obtener_o_incrementar_secuencial(username, year_int)
+        nuevo_secuencial = obtener_o_incrementar_secuencial(username, year_value)
         return jsonify({"secuencial": nuevo_secuencial}), 200
     except Exception as e:
         logger.error(f"Error al obtener secuencial: {e}")
