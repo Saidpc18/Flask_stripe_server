@@ -10,7 +10,6 @@ import stripe
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
-
 print("DEBUG FILE:", __file__)
 
 # ============================
@@ -21,7 +20,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("app.log"),  # Logs en archivo
-        logging.StreamHandler()          # Logs en consola
+        logging.StreamHandler()  # Logs en consola
     ]
 )
 logger = logging.getLogger(__name__)
@@ -37,13 +36,9 @@ DB_CONFIG = {
     "port": int(os.getenv("DB_PORT", 19506))
 }
 
-# Solo para mostrar la configuración en logs
 print("Configuración de la base de datos:")
 print(DB_CONFIG)
 
-# ============================
-# INICIALIZA FLASK
-# ============================
 app = Flask(__name__)
 
 # Configura DEBUG según la variable de entorno
@@ -52,9 +47,6 @@ if os.getenv("FLASK_ENV") == "production":
 else:
     app.config["DEBUG"] = True
 
-# ============================
-# CONFIGURACIÓN PARA FLASK-SQLALCHEMY
-# ============================
 # Construimos la URL de la BD
 default_db_url = (
     f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
@@ -65,7 +57,7 @@ print(default_db_url)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
     "DATABASE_URL",
-    default_db_url  # Por si no está definida DATABASE_URL en el entorno
+    default_db_url
 )
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -88,46 +80,35 @@ if not webhook_secret:
     logger.error("El secreto del webhook no está configurado.")
     raise ValueError("Stripe Webhook Secret es obligatorio.")
 
-# ============================
-# ESQUEMA OPCIONAL PARA VALIDAR EVENTOS DE STRIPE
-# ============================
+
 class StripeEventSchema(Schema):
     type = fields.String(required=True)
     data = fields.Dict(required=True)
 
+
 # ============================
 # MODELOS SQLALCHEMY
 # ============================
-
 class User(db.Model):
-    """
-    Modelo para la tabla 'usuarios' (en español).
-    Ajusta __tablename__ si tu tabla real se llama distinto.
-    """
     __tablename__ = 'usuarios'
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
-    license_expiration = db.Column(db.DateTime, nullable=True)  # Fecha de expiración de la licencia
-    secuencial = db.Column(db.Integer, default=0)               # Contador secuencial
-    last_year = db.Column(db.Integer, nullable=True)            # Año de referencia para resetear secuencial
-    created_at = db.Column(db.DateTime, default=db.func.now())  # Fecha de creación
+    license_expiration = db.Column(db.DateTime, nullable=True)
+    secuencial = db.Column(db.Integer, default=0)
+    last_year = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=db.func.now())
 
-    # Relación con VINs (si queremos consultarlos desde el usuario)
     vins = db.relationship("VIN", backref="owner", lazy=True)
 
     def __repr__(self):
         return f"<User {self.username}>"
 
+
 class VIN(db.Model):
-    """
-    Modelo para la tabla "VIN" (en mayúsculas).
-    Ajusta __tablename__ si tu tabla real se llama distinto.
-    """
-    __tablename__ = 'VIN'  # Si tu tabla en la DB se llama "VIN" con mayúsculas
+    __tablename__ = 'VIN'
     id = db.Column(db.Integer, primary_key=True)
-    # Relacionado con User; user_id apunta a 'usuarios.id'
     user_id = db.Column(db.Integer, db.ForeignKey('usuarios.id'), nullable=False)
 
     vin_completo = db.Column(db.String(17), nullable=False)
@@ -135,6 +116,7 @@ class VIN(db.Model):
 
     def __repr__(self):
         return f"<VIN {self.vin_completo}>"
+
 
 class Subscription(db.Model):
     __tablename__ = 'subscriptions'
@@ -158,7 +140,6 @@ class YearSequence(db.Model):
     year = db.Column(db.Integer, nullable=False)
     secuencial = db.Column(db.Integer, default=1)
 
-    # Asegura que no existan duplicados (user_id, year)
     __table_args__ = (
         db.UniqueConstraint('user_id', 'year', name='uq_user_year'),
     )
@@ -168,37 +149,27 @@ class YearSequence(db.Model):
 
 
 # ============================
-# FUNCIONES AUXILIARES / LÓGICA DE NEGOCIO
+# FUNCIONES AUXILIARES
 # ============================
-
 def get_user_by_username(username):
-    """ Devuelve una instancia de User o None. """
     return User.query.filter_by(username=username).first()
 
+
 def license_is_active(user: User) -> bool:
-    """
-    Verifica si la licencia de un usuario está activa (fecha > now).
-    """
     if not user or not user.license_expiration:
         return False
     return user.license_expiration > datetime.now()
 
+
 def renew_license(user: User) -> bool:
-    """
-    Renueva la licencia del usuario por 365 días.
-    Retorna True si el usuario existe, False si no.
-    """
     if not user:
         return False
     user.license_expiration = datetime.now() + timedelta(days=365)
     db.session.commit()
     return True
 
+
 def update_secuencial(user: User, year: int) -> int:
-    """
-    Obtiene y actualiza el secuencial del usuario, reiniciando si el año cambió.
-    Retorna el nuevo valor de secuencial.
-    """
     if not user:
         return 0
     if user.last_year != year:
@@ -209,25 +180,16 @@ def update_secuencial(user: User, year: int) -> int:
     db.session.commit()
     return user.secuencial
 
+
 def obtener_o_incrementar_secuencial(username: str, year: int) -> int:
-    """
-    Devuelve el secuencial para (username, year).
-    - Si no existe un registro, lo crea con secuencial=1 y retorna 1.
-    - Si existe, incrementa el secuencial (1..999). Si está en 999, regresa a 1.
-    - Retorna el nuevo valor.
-    """
-    # 1) Buscar el usuario
     user = get_user_by_username(username)
     if not user:
-        # Maneja el caso de usuario inexistente
         logger.warning(f"Usuario {username} no existe.")
         return 0
 
-    # 2) Buscar si existe un registro en year_sequences
     year_seq = YearSequence.query.filter_by(user_id=user.id, year=year).first()
 
     if not year_seq:
-        # 3a) Si no existe, creamos uno con secuencial=1
         year_seq = YearSequence(
             user_id=user.id,
             year=year,
@@ -237,7 +199,6 @@ def obtener_o_incrementar_secuencial(username: str, year: int) -> int:
         db.session.commit()
         return 1
     else:
-        # 3b) Si existe, incrementa o reinicia a 1 si está en 999
         if year_seq.secuencial >= 999:
             year_seq.secuencial = 1
         else:
@@ -248,18 +209,26 @@ def obtener_o_incrementar_secuencial(username: str, year: int) -> int:
 
 
 # ============================
+# DICCIONARIO DE LETRAS → AÑO (ejemplo)
+# ============================
+YEAR_MAP = {
+    "R": 2024,  # para 2024
+    # Añade más si lo requieres, e.g.
+    # "S": 2025,
+    # "T": 2026,
+}
+
+
+# ============================
 # RUTAS
 # ============================
 @app.route("/")
 def home():
     return "Bienvenido a la API de VIN Builder (SQLAlchemy Edition)"
 
+
 @app.route('/register', methods=['POST'])
 def register():
-    """
-    Registra un nuevo usuario.
-    JSON esperado: {"username": "algo", "password": "algo"}
-    """
     try:
         data = request.get_json(force=True)
     except Exception as e:
@@ -272,19 +241,14 @@ def register():
     if not username or not password:
         return jsonify({"error": "Usuario y contraseña son requeridos."}), 400
 
-    # Comprueba si el usuario ya existe
     existing = get_user_by_username(username)
     if existing:
         return jsonify({"error": "El usuario ya existe."}), 400
 
-    # Hashea la contraseña con bcrypt
     salt = bcrypt.gensalt()
     hashed_pw = bcrypt.hashpw(password.encode('utf-8'), salt)
     hashed_pw_str = hashed_pw.decode('utf-8')
 
-    print("DEBUG>>>", User, type(User), User.__module__)
-
-    # Crear instancia del modelo
     new_user = User(username=username, password=hashed_pw_str)
     db.session.add(new_user)
     try:
@@ -296,15 +260,12 @@ def register():
 
     return jsonify({"message": "Usuario registrado exitosamente."}), 201
 
+
 @app.route('/login', methods=['POST'])
 def login():
-    """
-    Inicia sesión de un usuario.
-    JSON esperado: {"username": "algo", "password": "algo"}
-    """
     data = request.json
     username = data.get("username")
-    password = data.get("password")  # texto plano
+    password = data.get("password")
 
     if not username or not password:
         return jsonify({"error": "Usuario y contraseña son requeridos"}), 400
@@ -313,7 +274,6 @@ def login():
     if not user:
         return jsonify({"error": "Usuario no encontrado"}), 404
 
-    # Verifica contraseña
     if bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8')):
         return jsonify({"message": "Login exitoso"}), 200
     else:
@@ -324,31 +284,40 @@ def login():
 def obtener_secuencial():
     """
     Endpoint para obtener el siguiente secuencial de un usuario por año.
-    JSON esperado: {"user": "username", "year": 2025}
+    Puede recibir year como número (2024) o letra (e.g. "R" => 2024).
+
+    JSON esperado: {"user": "username", "year": "R"} o {"year": 2024}
     """
     data = request.json
     username = data.get("user")
-    year = data.get("year")
+    year_value = data.get("year")
 
-    if not username or not year:
+    if not username or not year_value:
         return jsonify({"error": "Se requiere 'user' y 'year'"}), 400
 
+    # Intentamos convertir la letra a año si existe en YEAR_MAP
+    # De lo contrario, int(...) para pasarlo a entero.
     try:
-        nuevo_secuencial = obtener_o_incrementar_secuencial(username, int(year))
+        if isinstance(year_value, str) and year_value in YEAR_MAP:
+            # "R" => 2024
+            year_int = YEAR_MAP[year_value]
+        else:
+            # Convertir year_value a entero directamente
+            year_int = int(year_value)
+    except ValueError:
+        # Si falla la conversión
+        return jsonify({"error": f"Valor de 'year' inválido: {year_value}"}), 400
+
+    try:
+        nuevo_secuencial = obtener_o_incrementar_secuencial(username, year_int)
         return jsonify({"secuencial": nuevo_secuencial}), 200
     except Exception as e:
         logger.error(f"Error al obtener secuencial: {e}")
         return jsonify({"error": "Error al obtener el secuencial"}), 500
 
 
-# ============================
-# WEBHOOK DE STRIPE
-# ============================
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
-    """
-    Maneja los eventos de Stripe usando la validación de firma con stripe.Webhook.construct_event().
-    """
     payload = request.data
     sig_header = request.headers.get("Stripe-Signature")
 
@@ -356,14 +325,12 @@ def stripe_webhook():
     logger.debug(f"Payload recibido: {payload.decode('utf-8')}")
 
     try:
-        # Validar firma
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         logger.info(f"Evento recibido: {event.get('type')}")
 
         event_type = event.get("type", "")
         event_data = event.get("data", {}).get("object", {})
 
-        # Manejo de eventos
         if event_type == "checkout.session.completed":
             logger.info(f"Manejando evento: {event_type}")
             session = event_data
@@ -410,15 +377,9 @@ def stripe_webhook():
         logger.error(f"Error procesando el webhook: {e}")
         return jsonify({"error": "Error al procesar el webhook"}), 400
 
-# ============================
-# ENDPOINT PARA CREAR SESIÓN DE PAGO
-# ============================
+
 @app.route('/create-checkout-session', methods=['POST'])
 def create_checkout_session():
-    """
-    Crea una sesión de pago de Stripe y devuelve la URL de Checkout.
-    JSON esperado: {"user": "nombre_usuario"}
-    """
     try:
         data = request.json
         if not data or 'user' not in data:
@@ -430,7 +391,6 @@ def create_checkout_session():
         success_url = os.getenv("SUCCESS_URL", "https://flask-stripe-server.onrender.com/success")
         cancel_url = os.getenv("CANCEL_URL", "https://flask-stripe-server.onrender.com/cancel")
 
-        # Manejo de errores de tarjeta al crear la sesión
         try:
             session_obj = stripe.checkout.Session.create(
                 payment_method_types=['card'],
@@ -446,9 +406,8 @@ def create_checkout_session():
                 client_reference_id=user,
             )
         except stripe.error.CardError as e:
-            # Manejo de errores de tarjeta (código 402)
-            error_code = e.error.code  # p. ej. 'card_declined'
-            decline_code = getattr(e.error, 'decline_code', None)  # p. ej. 'insufficient_funds'
+            error_code = e.error.code
+            decline_code = getattr(e.error, 'decline_code', None)
 
             if error_code == "card_declined":
                 if decline_code == "insufficient_funds":
@@ -472,45 +431,31 @@ def create_checkout_session():
         logger.error(f"Error al crear la sesión de pago: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ============================
-# RUTAS PARA SUCCESS Y CANCEL
-# ============================
+
 @app.route("/success", methods=["GET"])
 def success():
     return "¡Pago exitoso! Gracias por tu compra."
+
 
 @app.route("/cancel", methods=["GET"])
 def cancel():
     return "El proceso de pago ha sido cancelado o ha fallado."
 
-# ============================
-# FUNCIONALIDADES PRINCIPALES
-# ============================
+
 @app.route("/funcion-principal", methods=["GET"])
 def funcion_principal():
-    """
-    Verifica si un usuario tiene licencia activa y retorna un mensaje de acceso.
-    Espera ?user=USERNAME en la query string.
-    """
     usuario = request.args.get("user")
     user = get_user_by_username(usuario)
     if not license_is_active(user):
         return jsonify({"error": "Licencia expirada o usuario inexistente. Renueva para continuar."}), 403
     return jsonify({"message": "Acceso permitido a la función principal."})
 
-# ============================
-# ENDPOINTS PARA VIN
-# ============================
+
 @app.route('/guardar_vin', methods=['POST'])
 def guardar_vin_endpoint():
-    
     print("DEBUG>>> VIN class:", VIN, type(VIN), VIN.__module__)
     print("DEBUG>>> VIN columns:", VIN.__table__.columns.keys())
 
-    """
-    Guarda un VIN completo en la tabla VIN, asociándolo a un usuario existente.
-    JSON esperado: {"user": "username", "vin_completo": "17 chars"}
-    """
     data = request.json
     user_name = data.get("user")
     vin_completo = data.get("vin_completo")
@@ -534,11 +479,9 @@ def guardar_vin_endpoint():
         logger.error(f"Error al guardar VIN: {e}")
         return jsonify({"error": str(e)}), 500
 
+
 @app.route('/ver_vins', methods=['GET'])
 def ver_vins():
-    """
-    Lista todos los VINs de un usuario dado por query param ?user=USERNAME
-    """
     user_name = request.args.get("user")
     if not user_name:
         return jsonify({"error": "Usuario no especificado"}), 400
@@ -548,7 +491,6 @@ def ver_vins():
         return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
 
     try:
-        # Accedemos a la relación user.vins (lazy=True) ya definida
         vins = user.vins
         resultado = [
             {
@@ -562,9 +504,7 @@ def ver_vins():
         logger.error(f"Error al listar VINs: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ============================
-# PUNTO DE ENTRADA
-# ============================
+
 if __name__ == "__main__":
     try:
         port = int(os.environ.get("PORT", 5000))
