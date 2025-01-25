@@ -1,9 +1,7 @@
 import tkinter as tk
-import requests  # Para enviar solicitudes HTTP al servidor Flask
-import webbrowser  # Para abrir la URL de Stripe en el navegador
+import requests
+import webbrowser
 from tkinter import ttk, messagebox
-from Servidor_Flask import obtener_o_incrementar_secuencial
-
 
 # ============================
 #   CATÁLOGOS (LOCALES)
@@ -88,19 +86,20 @@ catalogos = {
     "posicion_11": posicion_11,
 }
 
-# ============================
-#  CLASE PRINCIPAL
-# ============================
+
 class VINBuilderApp:
     def __init__(self, master):
         self.master = master
         self.master.title("VIN Builder - con PostgreSQL")
 
-        # Pantalla completa o maximizada
-        self.master.state("zoomed")  # O self.master.attributes("-fullscreen", True)
+        # Pantalla maximizada en Windows (en otros SO puede que no funcione igual)
+        self.master.state("zoomed")
 
+        # --------- ESTILO MODERNO EN TTK -----------
         style = ttk.Style()
-        style.theme_use("clam")
+        # Prueba "vista" en Windows (más moderno).
+        # Para Linux/macOS, a veces "clam" o "default" funciona mejor.
+        style.theme_use("vista")
 
         self.main_frame = ttk.Frame(self.master)
         self.main_frame.pack(fill="both", expand=True)
@@ -115,18 +114,16 @@ class VINBuilderApp:
         self.var_c10 = tk.StringVar()
         self.var_c11 = tk.StringVar()
 
-        # Usuario actual
         self.usuario_actual = None
-
         self.result_label = None
 
         self.mostrar_ventana_inicio()
 
-    # -----------------------------------------------------
-    #  FUNCIONES QUE SE COMUNICAN CON EL SERVIDOR FLASK
-    # -----------------------------------------------------
+    # =============================================
+    #        MÉTODOS PARA CONECTAR CON FLASK
+    # =============================================
     def iniciar_pago(self):
-        """Conecta con Flask (/create-checkout-session) para renovar licencia."""
+        """Renovar licencia vía /create-checkout-session."""
         if not self.usuario_actual:
             messagebox.showerror("Error", "Inicia sesión para realizar el pago.")
             return
@@ -139,7 +136,7 @@ class VINBuilderApp:
                 if "url" in data:
                     webbrowser.open(data["url"])
                     messagebox.showinfo("Pago Iniciado",
-                                        "Se ha abierto la página de pago en tu navegador.")
+                                        "Se abrió la página de pago en tu navegador.")
                 else:
                     messagebox.showerror("Error",
                                          "No se recibió una URL válida del servidor.")
@@ -147,15 +144,13 @@ class VINBuilderApp:
                 error_msg = response.json().get("error", "Error desconocido")
                 messagebox.showerror("Error",
                                      f"No se pudo iniciar el proceso de pago: {error_msg}")
-        except requests.exceptions.RequestException as e:
+        except requests.RequestException as e:
             messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
-        except Exception as e:
-            messagebox.showerror("Error", f"Ocurrió un error inesperado: {e}")
 
     def verificar_licencia(self):
         """
-        Llama al endpoint /funcion-principal en el servidor Flask
-        para verificar si la licencia está activa.
+        Llama a /funcion-principal para ver si la licencia está activa.
+        Retorna True o False.
         """
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
@@ -167,66 +162,56 @@ class VINBuilderApp:
                 params={"user": self.usuario_actual}
             )
             data = response.json()
-            if response.status_code == 403:
-                messagebox.showerror("Suscripción requerida", data["error"])
-                return False
-            elif "error" in data:
-                messagebox.showerror("Suscripción requerida", data["error"])
+            if response.status_code == 403 or "error" in data:
+                msg = data.get("error", "Licencia inválida.")
+                messagebox.showerror("Suscripción requerida", msg)
                 return False
             return True
-        except requests.exceptions.RequestException as e:
+        except requests.RequestException as e:
             messagebox.showerror("Error", f"No se pudo verificar la licencia: {e}")
-            return False
-        except Exception as e:
-            messagebox.showerror("Error", f"Ocurrió un error al verificar la licencia: {e}")
             return False
 
     def guardar_vin_en_flask(self, vin_data):
-        """Llama al endpoint /guardar_vin para guardar VIN en la base de datos."""
+        """Guarda el VIN en la base de datos de Flask por /guardar_vin."""
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
-
         url = "https://flask-stripe-server.onrender.com/guardar_vin"
-        payload = {
-            "user": self.usuario_actual,
-            **vin_data  # Asegúrate de enviar todos los datos del VIN
-        }
+        payload = {"user": self.usuario_actual, **vin_data}
+
         try:
             resp = requests.post(url, json=payload)
             if resp.status_code == 200:
-                messagebox.showinfo("Éxito", "VIN guardado correctamente (en PostgreSQL).")
+                messagebox.showinfo("Éxito", "VIN guardado en PostgreSQL.")
             else:
                 data = resp.json()
                 err = data.get("error", "Error desconocido")
                 messagebox.showerror("Error", f"No se pudo guardar el VIN: {err}")
-        except requests.exceptions.RequestException as e:
+        except requests.RequestException as e:
             messagebox.showerror("Error", f"Error al conectarse al servidor Flask: {e}")
 
     def ver_vins_en_flask(self):
-        """Llama al endpoint /ver_vins para obtener VINs del usuario."""
+        """Devuelve la lista de VINs del usuario en la BD de Flask."""
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
-            return
-
+            return []
         url = "https://flask-stripe-server.onrender.com/ver_vins"
         try:
             resp = requests.get(url, params={"user": self.usuario_actual})
             if resp.status_code == 200:
                 data = resp.json()
-                vins = data.get("vins", [])
-                return vins
+                return data.get("vins", [])
             else:
                 err = resp.json().get("error", "Error desconocido")
                 messagebox.showerror("Error", f"No se pudo obtener la lista de VINs: {err}")
                 return []
-        except requests.exceptions.RequestException as e:
+        except requests.RequestException as e:
             messagebox.showerror("Error", f"Error al conectarse al servidor Flask: {e}")
             return []
 
-    # -----------------------------------------------------
-    #  VENTANAS DE INICIO / LOGIN
-    # -----------------------------------------------------
+    # =============================================
+    #         VENTANAS DE INICIO / LOGIN
+    # =============================================
     def mostrar_ventana_inicio(self):
         self.limpiar_main_frame()
 
@@ -242,7 +227,8 @@ class VINBuilderApp:
     def ventana_crear_cuenta(self):
         self.limpiar_main_frame()
 
-        ttk.Label(self.main_frame, text="Crear Cuenta", font=("Arial", 14, "bold")).pack(pady=10)
+        ttk.Label(self.main_frame, text="Crear Cuenta",
+                  font=("Arial", 14, "bold")).pack(pady=10)
 
         ttk.Label(self.main_frame, text="Usuario:").pack()
         entry_reg_user = ttk.Entry(self.main_frame)
@@ -259,22 +245,24 @@ class VINBuilderApp:
                 messagebox.showerror("Error", "Completa todos los campos.")
                 return
 
-            # Utiliza la URL de tu servidor en producción (o de prueba)
             register_url = "https://flask-stripe-server.onrender.com/register"
             try:
-                response = requests.post(register_url, json={"username": username, "password": password})
+                response = requests.post(register_url,
+                                         json={"username": username, "password": password})
                 if response.status_code == 201:
-                    messagebox.showinfo("Éxito", "Cuenta creada exitosamente. Ahora puedes iniciar sesión.")
-                    self.mostrar_ventana_inicio()  # Regresa a la pantalla principal de inicio de sesión
+                    messagebox.showinfo("Éxito",
+                                        "Cuenta creada exitosamente. Ahora puedes iniciar sesión.")
+                    self.mostrar_ventana_inicio()
                 else:
                     data = response.json()
                     err = data.get("error", "Error desconocido")
                     messagebox.showerror("Error", f"Registro fallido: {err}")
-            except requests.exceptions.RequestException as e:
+            except requests.RequestException as e:
                 messagebox.showerror("Error", f"Error al conectarse con el servidor: {e}")
 
         ttk.Button(self.main_frame, text="Registrar", command=do_register).pack(pady=10)
-        ttk.Button(self.main_frame, text="Volver", command=self.mostrar_ventana_inicio).pack(pady=5)
+        ttk.Button(self.main_frame, text="Volver",
+                   command=self.mostrar_ventana_inicio).pack(pady=5)
 
     def ventana_iniciar_sesion(self):
         self.limpiar_main_frame()
@@ -297,9 +285,10 @@ class VINBuilderApp:
                 messagebox.showerror("Error", "Completa todos los campos.")
                 return
 
-            login_url = "https://flask-stripe-server.onrender.com/login"  # O la URL de producción
+            login_url = "https://flask-stripe-server.onrender.com/login"
             try:
-                response = requests.post(login_url, json={"username": user, "password": pw})
+                response = requests.post(login_url,
+                                         json={"username": user, "password": pw})
                 if response.status_code == 200:
                     messagebox.showinfo("Éxito", f"Bienvenido, {user}")
                     self.usuario_actual = user
@@ -308,18 +297,17 @@ class VINBuilderApp:
                     data = response.json()
                     err = data.get("error", "Error desconocido")
                     messagebox.showerror("Error", f"Login fallido: {err}")
-            except requests.exceptions.RequestException as e:
+            except requests.RequestException as e:
                 messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
 
         ttk.Button(self.main_frame, text="Iniciar Sesión",
                    command=do_login).pack(pady=10)
-
         ttk.Button(self.main_frame, text="Volver",
                    command=self.mostrar_ventana_inicio).pack()
 
-    # -----------------------------------------------------
-    #  VENTANA PRINCIPAL (POST-LOGIN)
-    # -----------------------------------------------------
+    # =============================================
+    #       VENTANA PRINCIPAL (POST-LOGIN)
+    # =============================================
     def ventana_principal(self):
         self.limpiar_main_frame()
 
@@ -358,7 +346,7 @@ class VINBuilderApp:
                    command=self.cerrar_sesion).pack(pady=10)
 
     def crear_optionmenus(self, parent):
-        ttk.Label(parent, text="Pos.4 (Ej. Modelo):").pack()
+        ttk.Label(parent, text="Pos.4 (Modelo):").pack()
         self.menu_c4 = ttk.OptionMenu(
             parent,
             self.var_c4,
@@ -403,7 +391,7 @@ class VINBuilderApp:
         )
         self.menu_c8.pack()
 
-        ttk.Label(parent, text="Pos.10:").pack()
+        ttk.Label(parent, text="Pos.10 (Año):").pack()
         self.menu_c10 = ttk.OptionMenu(
             parent,
             self.var_c10,
@@ -412,7 +400,7 @@ class VINBuilderApp:
         )
         self.menu_c10.pack()
 
-        ttk.Label(parent, text="Pos.11:").pack()
+        ttk.Label(parent, text="Pos.11 (Planta):").pack()
         self.menu_c11 = ttk.OptionMenu(
             parent,
             self.var_c11,
@@ -427,15 +415,20 @@ class VINBuilderApp:
         return ""
 
     def generar_vin(self):
-        """Genera VIN localmente y luego lo guarda en Flask (PostgreSQL)."""
+        """
+        Genera VIN localmente (módulo 9, etc.) y pide
+        secuencial localmente con from Servidor_Flask,
+        OJO: Estás llamando a local 'obtener_o_incrementar_secuencial',
+        si vas con enfoque A (puro HTTP),
+        deberías pedirlo a /obtener_secuencial
+        en tu servidor Flask.
+        """
         if not self.verificar_licencia():
             return
-
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
 
-        # Obtener valores para las posiciones del VIN
         wmi = self.var_wmi.get().strip().upper()
         c4 = posicion_4.get(self.var_c4.get(), "")
         c5 = posicion_5.get(self.var_c5.get(), "")
@@ -449,27 +442,22 @@ class VINBuilderApp:
             messagebox.showerror("Error", "Faltan datos en uno de los catálogos.")
             return
 
-        try:
-            # Obtener y actualizar el secuencial
-            sec = obtener_o_incrementar_secuencial(self.usuario_actual, c10)
-        except Exception as e:
-            messagebox.showerror("Error", f"Error al actualizar el secuencial: {e}")
-            return
+        # ---- Cambiar la lógica "local" por un request a /obtener_secuencial,
+        # para respetar el ENFOQUE A.
+        # *Ejemplo*
+        sec = self.obtener_secuencial_desde_servidor(c10)
+        if sec == 0:
+            return  # ya mostré error adentro
 
-        # Formatear el secuencial a 3 dígitos
         sec_str = str(sec).zfill(3)
-
-        # Posiciones fijas 12, 13, 14
         fixed_12_14 = "098"
 
-        # Calcular la posición 9 (módulo 11 de la suma ponderada)
+        # Calcular pos9
         valores = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{fixed_12_14}{sec_str}"
         pos9 = self.calcular_posicion_9(valores)
 
-        # Construir el VIN completo
         vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{pos9}{c10}{c11}{fixed_12_14}{sec_str}"
 
-        # Guardar VIN en el servidor Flask
         vin_data = {
             "wmi": wmi,
             "c4": c4,
@@ -486,44 +474,50 @@ class VINBuilderApp:
         }
         self.guardar_vin_en_flask(vin_data)
 
-        # Mostrar el VIN generado
         if self.result_label:
             self.result_label.config(text=f"VIN/NIV: {vin_completo}", font=("Arial", 24, "bold"))
         else:
-            self.result_label = ttk.Label(self.right_frame, text=f"VIN/NIV: {vin_completo}", font=("Arial", 24, "bold"))
+            self.result_label = ttk.Label(self.right_frame, text=f"VIN/NIV: {vin_completo}",
+                                          font=("Arial", 24, "bold"))
             self.result_label.pack(pady=5)
 
+    def obtener_secuencial_desde_servidor(self, year_code):
+        """
+        Llama a /obtener_secuencial en Flask y retorna el secuencial (int).
+        """
+        url = "https://flask-stripe-server.onrender.com/obtener_secuencial"
+        payload = {"user": self.usuario_actual, "year": year_code}
+        try:
+            resp = requests.post(url, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("secuencial", 0)
+            else:
+                err = resp.json().get("error", "Error desconocido")
+                messagebox.showerror("Error", f"Error al obtener secuencial: {err}")
+                return 0
+        except requests.RequestException as e:
+            messagebox.showerror("Error", f"No se pudo conectar a /obtener_secuencial: {e}")
+            return 0
+
     def calcular_posicion_9(self, valores):
-        """
-        Calcula la posición 9 del VIN usando la tabla personalizada de sustituciones.
-        """
-        # Tabla personalizada de valores
         sustituciones = {
             "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
             "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9, "S": 2,
             "T": 3, "U": 4, "V": 5, "W": 6, "X": 7, "Y": 8, "Z": 9,
-            **{str(i): i for i in range(10)}  # Números del 0 al 9
         }
-
-        # Cálculo de la suma ponderada sin pesos, solo sustituciones
-        suma = sum(
-            sustituciones.get(char, 0) for char in valores
-        )
-
-        # Cálculo del módulo
+        for i in range(10):
+            sustituciones[str(i)] = i
+        suma = sum(sustituciones.get(char, 0) for char in valores)
         resultado_modulo = suma % 11
-
-        # Devuelve "X" si el módulo es 10, o el número correspondiente
         return "X" if resultado_modulo == 10 else str(resultado_modulo)
 
     def ventana_lista_vins(self):
-        """Obtiene VINs desde Flask (PostgreSQL) y los muestra."""
         if not self.verificar_licencia():
             return
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
-
         vins = self.ver_vins_en_flask()
         vins_window = tk.Toplevel(self.master)
         vins_window.title("VINs Generados")
@@ -540,14 +534,12 @@ class VINBuilderApp:
 
         texto_vins = ""
         for vin in vins:
-            # Asegúrate de que `vin_completo` esté incluido en los datos recuperados
             vin_completo = vin.get("vin_completo", "VIN no disponible")
-            texto_vins += f"VIN Completo: {vin_completo}\n"
             fecha_crea = vin.get("created_at", "")
-            texto_vins += f"Creado: {fecha_crea}\n"
-            texto_vins += "-" * 40 + "\n"
+            texto_vins += f"VIN Completo: {vin_completo}\nCreado: {fecha_crea}\n" + ("-"*40 + "\n")
 
-        ttk.Label(scroll_frame, text=texto_vins, justify=tk.LEFT, font=("Arial", 14, "bold")).pack(pady=10)
+        ttk.Label(scroll_frame, text=texto_vins, justify=tk.LEFT,
+                  font=("Arial", 14, "bold")).pack(pady=10)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
@@ -559,15 +551,10 @@ class VINBuilderApp:
         self.usuario_actual = None
         self.mostrar_ventana_inicio()
 
-    def ventana_editar_tablas(self):
-        # Método existente para editar catálogos (local)
-        pass
 
-
-# ============================
-#  PUNTO DE ENTRADA
-# ============================
 if __name__ == "__main__":
     root = tk.Tk()
+    root.title("VIN Builder - Enfoque A (HTTP Flask)")
+    # Crea la app
     app = VINBuilderApp(root)
     root.mainloop()
