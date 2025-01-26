@@ -3,6 +3,7 @@ import webbrowser
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 from tkinter import messagebox
+from client_config import ClientConfig
 
 # ============================
 #   CATÁLOGOS (LOCALES)
