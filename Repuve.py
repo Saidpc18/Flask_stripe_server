@@ -3,7 +3,27 @@ import webbrowser
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 from tkinter import messagebox
+
+# IMPORTACIONES PARA PYUPDATER
 from client_config import ClientConfig
+from pyupdater.client import Client
+
+# ============================
+#   Inicializar PyUpdater
+# ============================
+client = Client(ClientConfig(), refresh=True)
+
+def check_for_updates():
+    """Función para verificar actualizaciones y notificar al usuario."""
+    app_update = client.refresh()
+    if app_update is not None:
+        response = messagebox.askyesno("Actualización disponible",
+                                       "Hay una nueva versión disponible. ¿Deseas actualizar ahora?")
+        if response:
+            client.download()
+            messagebox.showinfo("Actualización", "La nueva versión se descargó correctamente.")
+    else:
+        messagebox.showinfo("Actualización", "No hay actualizaciones disponibles.")
 
 # ============================
 #   CATÁLOGOS (LOCALES)
@@ -358,11 +378,14 @@ class VINBuilderApp:
         tb.Button(self.right_frame, text="Ver VINs Generados", bootstyle=INFO,
                   command=self.ventana_lista_vins).pack(pady=5, ipadx=5)
 
+        # Botón para buscar actualizaciones
+        tb.Button(self.right_frame, text="Buscar actualizaciones", bootstyle=WARNING,
+                  command=check_for_updates).pack(pady=10, ipadx=5)
+
         tb.Button(self.right_frame, text="Cerrar Sesión", bootstyle=DANGER,
                   command=self.cerrar_sesion).pack(pady=10, ipadx=5)
 
     def crear_optionmenus(self, parent):
-        # Helper para OptionMenus
         def valor_inicial(dic):
             return list(dic.keys())[0] if dic else ""
 
@@ -421,7 +444,6 @@ class VINBuilderApp:
             messagebox.showerror("Error", "Faltan datos en uno de los catálogos.")
             return
 
-        # Llamamos a /obtener_secuencial en Flask
         sec = self.obtener_secuencial_desde_servidor(c10)
         if sec == 0:
             return  # se manejó el error en la función
@@ -457,7 +479,6 @@ class VINBuilderApp:
             self.result_label.pack(pady=5)
 
     def calcular_posicion_9(self, valores):
-        # Cálculo módulo 11
         sustituciones = {
             "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
             "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9, "S": 2,
@@ -517,6 +538,7 @@ if __name__ == "__main__":
     # Crea una ventana con ttkbootstrap, aplicando un tema moderno
     app_tk = tb.Window(themename="sandstone")
     app_tk.title("VIN Builder - ttkbootstrap Edition")
-    # Instancia nuestra app
+
+    # Instancia e inicia la app
     VINBuilderApp(app_tk)
     app_tk.mainloop()

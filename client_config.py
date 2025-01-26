@@ -1,6 +1,6 @@
 class ClientConfig(object):
     PUBLIC_KEY = 'None'
-    APP_NAME = 'Vinder'
+    APP_NAME = 'Repuve'
     COMPANY_NAME = 'Said_Perales'
     HTTP_TIMEOUT = 30
     MAX_DOWNLOAD_RETRIES = 3
