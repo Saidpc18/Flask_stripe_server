@@ -7,14 +7,31 @@
     "CLIENT_CONFIG_PATH": [
       "client_config.py"
     ],
+<<<<<<< HEAD
     "COMPANY_NAME": "Said_P",
+=======
+    "COMPANY_NAME": "SaidPerales",
+>>>>>>> a3481df0d1f43c159e331261ee7bfcd8228f8dfb
     "PLUGIN_CONFIGS": {},
     "UPDATE_PATCHES": true,
     "MAX_DOWNLOAD_RETRIES": 3,
     "HTTP_TIMEOUT": 30,
     "UPDATE_URLS": [
+<<<<<<< HEAD
       "https://github.com/Saidpc18/Flask_stripe_server/releases"
     ],
     "DATA_DIR": "C:\\Users\\saidp\\PycharmProjects\\pythonProject2"
+=======
+      "https://github.com/Saidpc18/Flask_stripe_server/releases",
+      "https://flask-stripe-server.onrender.com"
+    ],
+    "DATA_DIR": "C:\\Users\\saidp\\PycharmProjects\\pythonProject2"
+  },
+  "version_meta": {
+    "updates": {}
+  },
+  "py_repo_config": {
+    "patches": {}
+>>>>>>> a3481df0d1f43c159e331261ee7bfcd8228f8dfb
   }
 }
