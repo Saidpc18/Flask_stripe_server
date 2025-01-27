@@ -11,6 +11,15 @@ from pyupdater.client import Client
 # ============================
 #   Inicializar PyUpdater
 # ============================
+try:
+    with open(ClientConfig.PUBLIC_KEY_PATH, "r") as f:
+        ClientConfig.PUBLIC_KEY = f.read()
+except FileNotFoundError:
+    print("Error: No se encontró el archivo de clave pública.")
+    exit(1)
+
+
+
 client = Client(ClientConfig(), refresh=True)
 
 def check_for_updates():
