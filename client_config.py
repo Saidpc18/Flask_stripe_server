@@ -1,5 +1,8 @@
 class ClientConfig(object):
-    PUBLIC_KEY = '.pyupdater/keys/keys.pub'
+        # Ruta al archivo de la clave pública
+    PUBLIC_KEY_PATH = '.pyupdater/keys/keys.pub'
+    # Inicialmente, PUBLIC_KEY se deja vacío; se llenará al cargar la clave pública
+    PUBLIC_KEY = None
     APP_NAME = 'Vinder'
     COMPANY_NAME = 'SaidPerales'
     HTTP_TIMEOUT = 30
