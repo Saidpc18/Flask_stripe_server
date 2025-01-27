@@ -12,6 +12,8 @@ from pyupdater.client import Client
 #   Inicializar PyUpdater
 # ============================
 
+print(ClientConfig.PUBLIC_KEY)
+
 client = Client(ClientConfig(), refresh=True)
 
 def check_for_updates():
