@@ -1,0 +1,21 @@
+{
+  "config_dir": "C:\\Users\\saidp\\PycharmProjects\\pythonProject2\\.pyupdater",
+  "filename": "C:\\Users\\saidp\\PycharmProjects\\pythonProject2\\.pyupdater\\config.pyu",
+  "count": 0,
+  "app_config": {
+    "APP_NAME": "Vinder",
+    "CLIENT_CONFIG_PATH": [
+      "client_config.py"
+    ],
+    "COMPANY_NAME": "Said_Perales",
+    "PLUGIN_CONFIGS": {},
+    "UPDATE_PATCHES": true,
+    "MAX_DOWNLOAD_RETRIES": 3,
+    "HTTP_TIMEOUT": 30,
+    "UPDATE_URLS": [
+      "https://github.com/Saidpc18/Flask_stripe_server/releases",
+      "https://flask-stripe-server.onrender.com"
+    ],
+    "DATA_DIR": "C:\\Users\\saidp\\PycharmProjects\\pythonProject2"
+  }
+}
