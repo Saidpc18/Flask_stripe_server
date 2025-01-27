@@ -12,6 +12,12 @@ from pyupdater.client import Client
 #   Inicializar PyUpdater
 # ============================
 
+# Sobrescribir método `_get_signing_key` para evitar el error de JSONDecodeError
+def patched_get_signing_key(self):
+    self.signing_key = ClientConfig.PUBLIC_KEY
+
+Client._get_signing_key = patched_get_signing_key
+
 print(ClientConfig.PUBLIC_KEY)
 
 client = Client(ClientConfig(), refresh=True)
