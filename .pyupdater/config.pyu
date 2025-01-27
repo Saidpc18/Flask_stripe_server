@@ -17,5 +17,11 @@
       "https://flask-stripe-server.onrender.com"
     ],
     "DATA_DIR": "C:\\Users\\saidp\\PycharmProjects\\pythonProject2"
+  },
+  "version_meta": {
+    "updates": {}
+  },
+  "py_repo_config": {
+    "patches": {}
   }
 }
