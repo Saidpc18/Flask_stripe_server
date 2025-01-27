@@ -21,7 +21,6 @@ sdist/
 var/
 wheels/
 share/python-wheels/
-pyu-data/new/Vinder.exe
 *.egg-info/
 .installed.cfg
 *.egg
