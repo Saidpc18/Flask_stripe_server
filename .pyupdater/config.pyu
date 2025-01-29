@@ -4,7 +4,9 @@
   "count": 0,
   "app_config": {
     "APP_NAME": "Vinder",
-    "CLIENT_CONFIG_PATH": ["client_config.py"],
+    "CLIENT_CONFIG_PATH": [
+      "client_config.py"
+    ],
     "COMPANY_NAME": "SaidPerales",
     "PLUGIN_CONFIGS": {},
     "UPDATE_PATCHES": true,
