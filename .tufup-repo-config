@@ -1,0 +1,38 @@
+{
+    "app_name": "Vinder",
+    "app_version_attr": "1.0.0",
+    "encrypted_keys": [
+        "root",
+        "targets",
+        "snapshot",
+        "timestamp"
+    ],
+    "expiration_days": {
+        "root": 1200,
+        "snapshot": 1200,
+        "targets": 1200,
+        "timestamp": 1200
+    },
+    "key_map": {
+        "root": [
+            "root"
+        ],
+        "snapshot": [
+            "snapshot"
+        ],
+        "targets": [
+            "targets"
+        ],
+        "timestamp": [
+            "timestamp"
+        ]
+    },
+    "keys_dir": "tufup_keys",
+    "repo_dir": "tufup_repo",
+    "thresholds": {
+        "root": 1,
+        "snapshot": 1,
+        "targets": 1,
+        "timestamp": 1
+    }
+}

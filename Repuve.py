@@ -3,36 +3,25 @@ import webbrowser
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 from tkinter import messagebox
+import tufup
 
-# IMPORTACIONES PARA PYUPDATER
-from client_config import ClientConfig
-from pyupdater.client import Client
+# URL donde GitHub almacena las actualizaciones
+repo_url = "https://github.com/Saidpc18/Flask_stripe_server/releases/tag/v1.0.0"
 
-# ============================
-#   Inicializar PyUpdater
-# ============================
+# Configurar el cliente de actualizaciones
+client = tufup.Client(app_name="Vinder", repo_url=repo_url)
 
-# Sobrescribir método `_get_signing_key` para evitar el error de JSONDecodeError
-def patched_get_signing_key(self):
-    self.signing_key = ClientConfig.PUBLIC_KEY
-
-Client._get_signing_key = patched_get_signing_key
-
-print(ClientConfig.PUBLIC_KEY)
-
-client = Client(ClientConfig(), refresh=True)
-
-def check_for_updates():
-    """Función para verificar actualizaciones y notificar al usuario."""
-    app_update = client.refresh()
-    if app_update is not None:
-        response = messagebox.askyesno("Actualización disponible",
-                                       "Hay una nueva versión disponible. ¿Deseas actualizar ahora?")
-        if response:
-            client.download()
-            messagebox.showinfo("Actualización", "La nueva versión se descargó correctamente.")
+# Verificar si hay una actualización disponible
+try:
+    if client.check_for_updates():
+        print("Nueva versión disponible. Actualizando...")
+        client.update()
     else:
-        messagebox.showinfo("Actualización", "No hay actualizaciones disponibles.")
+        print("No hay actualizaciones disponibles.")
+except Exception as e:
+    print(f"Error al buscar actualizaciones: {e}")
+
+
 
 # ============================
 #   CATÁLOGOS (LOCALES)
@@ -133,6 +122,18 @@ class VINBuilderApp:
         self.main_frame.pack(fill="both", expand=True)
 
         self.mostrar_ventana_inicio()
+
+
+    def check_for_updates(self):
+        try:
+            if client.check_for_updates():
+                messagebox.showinfo("Actualización disponible", "Descargando e instalando la actualización...")
+                client.update()
+                messagebox.showinfo("Actualización completada", "Reinicia la aplicación para aplicar los cambios.")
+            else:
+                messagebox.showinfo("Actualización", "No hay nuevas actualizaciones disponibles.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al buscar actualizaciones: {e}")
 
     # ============================
     #   LLAMADAS AL SERVIDOR
