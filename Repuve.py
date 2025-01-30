@@ -4,22 +4,28 @@ import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 from tkinter import messagebox
 import tufup
+import subprocess
 
 # URL donde GitHub almacena las actualizaciones
-repo_url = "https://github.com/Saidpc18/Flask_stripe_server/releases/tag/v1.0.0"
+repo_url = "https://github.com/Saidpc18/Flask_stripe_server/releases/latest/download/Vinder-1.0.0.tar.gz"
 
-# Configurar el cliente de actualizaciones
-client = tufup.Client(app_name="Vinder", repo_url=repo_url)
 
-# Verificar si hay una actualización disponible
-try:
-    if client.check_for_updates():
-        print("Nueva versión disponible. Actualizando...")
-        client.update()
-    else:
-        print("No hay actualizaciones disponibles.")
-except Exception as e:
-    print(f"Error al buscar actualizaciones: {e}")
+def check_for_updates():
+    try:
+        # Verificar si hay una nueva versión
+        result = subprocess.run(["tufup", "check"], capture_output=True, text=True)
+        if "New version available" in result.stdout:
+            print("Nueva versión disponible. Actualizando...")
+            subprocess.run(["tufup", "update"])
+        else:
+            print("No hay actualizaciones disponibles.")
+    except Exception as e:
+        print(f"Error al verificar actualizaciones: {e}")
+
+# Ejecutar al iniciar la aplicación
+check_for_updates()
+
+
 
 
 
