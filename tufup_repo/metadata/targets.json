@@ -1,0 +1,28 @@
+{
+ "signatures": [
+  {
+   "keyid": "5b0ef2c9ca537ea0185c458d3b49b2ccab265c3f9a8a0d0d3363f5eeb9d381ab",
+   "sig": "31f77a56280916d8de8d70ba148dcdb9ac25dbf27cfdbf840547165193425144dabf6c59f3cff74b4110c12a288b73c2e6e31c7b1f99242ce520027b22770f08"
+  }
+ ],
+ "signed": {
+  "_type": "targets",
+  "expires": "2028-05-14T14:41:51Z",
+  "spec_version": "1.0.31",
+  "targets": {
+   "Vinder-1.0.0.tar.gz": {
+    "custom": {
+     "tufup": {
+      "required": false
+     },
+     "user": null
+    },
+    "hashes": {
+     "sha256": "182e40c1c2e3d5f9813eae85894de11291c0122497c4dca42082851f34f41a47"
+    },
+    "length": 253159268
+   }
+  },
+  "version": 2
+ }
+}
