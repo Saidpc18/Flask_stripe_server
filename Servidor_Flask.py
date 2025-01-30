@@ -91,8 +91,11 @@ class StripeEventSchema(Schema):
 # DICCIONARIO DE LETRAS → AÑO
 # ============================
 YEAR_MAP = {
-    "R": 2024,  # Por ejemplo "R" => 2024
-    # Agrega más equivalencias si las necesitas
+    "R": 2024,
+    "S": 2025,
+    "T": 2026,
+    "V": 2027,
+    "W": 2028,
 }
 
 # ============================
