@@ -7,7 +7,7 @@ import tufup
 import subprocess
 
 # URL donde GitHub almacena las actualizaciones
-repo_url = "https://github.com/Saidpc18/Flask_stripe_server/releases/latest/download/Vinder-1.0.0.tar.gz"
+repo_url = "https://github.com/Saidpc18/Flask_stripe_server/releases/latest/download/"
 
 
 def check_for_updates():
