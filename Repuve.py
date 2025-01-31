@@ -6,6 +6,9 @@ from tkinter import messagebox
 import tufup
 import subprocess
 
+# Si usas Python 3.10+ y no has instalado ttkbootstrap manualmente,
+# asegúrate de tenerlo instalado: pip install ttkbootstrap
+
 # URL donde GitHub almacena las actualizaciones
 repo_url = "https://github.com/Saidpc18/Flask_stripe_server/releases/latest/download/"
 
@@ -21,12 +24,6 @@ def check_for_updates():
             print("No hay actualizaciones disponibles.")
     except Exception as e:
         print(f"Error al verificar actualizaciones: {e}")
-
-# Ejecutar al iniciar la aplicación
-check_for_updates()
-
-
-
 
 
 # ============================
@@ -102,10 +99,17 @@ posicion_11 = {
     "Ex Hacienda la Honda, Zacatecas, México": "A"
 }
 
+
 class VINBuilderApp:
     def __init__(self, master: tb.Window):
         self.master = master
         self.master.title("VIN Builder - con PostgreSQL (ttkbootstrap)")
+
+        # Asegúrate de tener un archivo .ico en la misma carpeta o da la ruta absoluta
+        try:
+            self.master.iconbitmap("Logo_Vinder.ico")  # Cambia "app_icon.ico" por tu icono
+        except Exception:
+            print("No se pudo cargar el icono. Verifica la ruta o el nombre del archivo .ico")
 
         # Ocupa casi toda la pantalla
         self.master.state("zoomed")
@@ -127,19 +131,11 @@ class VINBuilderApp:
         self.main_frame = tb.Frame(self.master, padding=20)
         self.main_frame.pack(fill="both", expand=True)
 
+        # Ejecutar check de updates al inicio de la app
+        check_for_updates()
+
+        # Muestra la ventana de inicio
         self.mostrar_ventana_inicio()
-
-
-    def check_for_updates(self):
-        try:
-            if client.check_for_updates():
-                messagebox.showinfo("Actualización disponible", "Descargando e instalando la actualización...")
-                client.update()
-                messagebox.showinfo("Actualización completada", "Reinicia la aplicación para aplicar los cambios.")
-            else:
-                messagebox.showinfo("Actualización", "No hay nuevas actualizaciones disponibles.")
-        except Exception as e:
-            messagebox.showerror("Error", f"Error al buscar actualizaciones: {e}")
 
     # ============================
     #   LLAMADAS AL SERVIDOR
@@ -155,14 +151,12 @@ class VINBuilderApp:
                 data = response.json()
                 if "url" in data:
                     webbrowser.open(data["url"])
-                    messagebox.showinfo("Pago Iniciado",
-                                        "Se abrió la página de pago en tu navegador.")
+                    messagebox.showinfo("Pago Iniciado", "Se abrió la página de pago en tu navegador.")
                 else:
                     messagebox.showerror("Error", "No se recibió una URL válida del servidor.")
             else:
                 err = response.json().get("error", "Error desconocido")
-                messagebox.showerror("Error",
-                                     f"No se pudo iniciar el proceso de pago: {err}")
+                messagebox.showerror("Error", f"No se pudo iniciar el proceso de pago: {err}")
         except requests.RequestException as e:
             messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
 
@@ -237,13 +231,64 @@ class VINBuilderApp:
             messagebox.showerror("Error", f"No se pudo conectar a /obtener_secuencial: {e}")
             return 0
 
+    # ============ NUEVOS MÉTODOS PARA ELIMINAR VINs =============
+
+    def eliminar_todos_vins(self):
+        """
+        Llama a un endpoint en Flask para eliminar todos los VINs del usuario actual.
+        Asegúrate de tener un endpoint /eliminar_todos_vins en tu servidor.
+        """
+        if not self.usuario_actual:
+            messagebox.showerror("Error", "No hay usuario activo.")
+            return
+
+        # Verificamos que tenga licencia activa antes de proceder (opcional)
+        if not self.verificar_licencia():
+            return
+
+        try:
+            url = "https://flask-stripe-server.onrender.com/eliminar_todos_vins"
+            resp = requests.post(url, json={"user": self.usuario_actual})
+            if resp.status_code == 200:
+                messagebox.showinfo("Éxito", "Todos los VINs han sido eliminados.")
+                # Tras eliminar, refrescamos la ventana de la lista de VINs si existe
+            else:
+                err = resp.json().get("error", "Error desconocido")
+                messagebox.showerror("Error", f"No se pudo eliminar todos los VINs: {err}")
+        except requests.RequestException as e:
+            messagebox.showerror("Error", f"No se pudo conectar al servidor: {e}")
+
+    def eliminar_ultimo_vin(self):
+        """
+        Llama a un endpoint en Flask para eliminar el último VIN del usuario actual.
+        Asegúrate de tener un endpoint /eliminar_ultimo_vin en tu servidor.
+        """
+        if not self.usuario_actual:
+            messagebox.showerror("Error", "No hay usuario activo.")
+            return
+
+        # Verificamos que tenga licencia activa antes de proceder (opcional)
+        if not self.verificar_licencia():
+            return
+
+        try:
+            url = "https://flask-stripe-server.onrender.com/eliminar_ultimo_vin"
+            resp = requests.post(url, json={"user": self.usuario_actual})
+            if resp.status_code == 200:
+                messagebox.showinfo("Éxito", "El último VIN ha sido eliminado.")
+                # Tras eliminar, refrescamos la ventana de la lista de VINs si existe
+            else:
+                err = resp.json().get("error", "Error desconocido")
+                messagebox.showerror("Error", f"No se pudo eliminar el último VIN: {err}")
+        except requests.RequestException as e:
+            messagebox.showerror("Error", f"No se pudo conectar al servidor: {e}")
+
     # ============================
     #       VENTANAS
     # ============================
     def mostrar_ventana_inicio(self):
         self.limpiar_main_frame()
 
-        # Centramos los widgets en un Frame interno
         container = tb.Frame(self.main_frame, padding=40)
         container.pack(expand=True)
 
@@ -394,8 +439,15 @@ class VINBuilderApp:
         tb.Button(self.right_frame, text="Ver VINs Generados", bootstyle=INFO,
                   command=self.ventana_lista_vins).pack(pady=5, ipadx=5)
 
+        # Botones para eliminación de VINs directamente en la ventana principal (opcional):
+        tb.Button(self.right_frame, text="Eliminar TODOS los VINs", bootstyle=WARNING,
+                  command=self.eliminar_todos_vins).pack(pady=5, ipadx=5)
+
+        tb.Button(self.right_frame, text="Eliminar ÚLTIMO VIN", bootstyle=WARNING,
+                  command=self.eliminar_ultimo_vin).pack(pady=5, ipadx=5)
+
         # Botón para buscar actualizaciones
-        tb.Button(self.right_frame, text="Buscar actualizaciones", bootstyle=WARNING,
+        tb.Button(self.right_frame, text="Buscar actualizaciones", bootstyle=SECONDARY,
                   command=check_for_updates).pack(pady=10, ipadx=5)
 
         tb.Button(self.right_frame, text="Cerrar Sesión", bootstyle=DANGER,
@@ -532,11 +584,20 @@ class VINBuilderApp:
         for vin in vins:
             vin_completo = vin.get("vin_completo", "VIN no disponible")
             fecha_crea = vin.get("created_at", "")
-            texto_vins += f"VIN Completo: {vin_completo}\nCreado: {fecha_crea}\n" + ("-"*40 + "\n")
+            texto_vins += f"VIN Completo: {vin_completo}\nCreado: {fecha_crea}\n" + ("-" * 40 + "\n")
 
         lbl_text = tb.Label(scroll_frame, text=texto_vins,
                             justify="left", font=("Helvetica", 12, "bold"))
         lbl_text.pack(pady=10)
+
+        # Agregamos botones para eliminar en la misma ventana, si se desea
+        btn_eliminar_todos = tb.Button(scroll_frame, text="Eliminar TODOS los VINs",
+                                       bootstyle=DANGER, command=self.eliminar_todos_vins)
+        btn_eliminar_todos.pack(pady=5)
+
+        btn_eliminar_ultimo = tb.Button(scroll_frame, text="Eliminar ÚLTIMO VIN",
+                                        bootstyle=DANGER, command=self.eliminar_ultimo_vin)
+        btn_eliminar_ultimo.pack(pady=5)
 
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
