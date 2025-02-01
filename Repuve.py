@@ -6,14 +6,14 @@ from tkinter import messagebox
 import tufup
 import subprocess
 
-# Si usas Python 3.10+ y no has instalado ttkbootstrap manualmente,
-# asegúrate de tenerlo instalado: pip install ttkbootstrap
-
-# URL donde GitHub almacena las actualizaciones
+# URL donde GitHub almacena las actualizaciones (para 'tufup')
 repo_url = "https://github.com/Saidpc18/Flask_stripe_server/releases/latest/download/"
 
-
 def check_for_updates():
+    """
+    Verifica si hay una versión más reciente disponible usando 'tufup'.
+    En caso de que exista, se actualiza automáticamente.
+    """
     try:
         # Verificar si hay una nueva versión
         result = subprocess.run(["tufup", "check"], capture_output=True, text=True)
@@ -27,7 +27,7 @@ def check_for_updates():
 
 
 # ============================
-#   CATÁLOGOS (LOCALES)
+#  CATÁLOGOS (LOCALES)
 # ============================
 posicion_4 = {
     "JM Remolque Cama Baja Tapada": "M",
@@ -42,6 +42,7 @@ posicion_4 = {
     "JM Semirremolque Tipo Gondola": "C",
     "JM Semirremolque Tipo Jaula Granelera": "B"
 }
+
 posicion_5 = {
     "5' X 10' A 14' Pies": "1",
     "5´ X 15´ A 20´Pies": "2",
@@ -55,6 +56,7 @@ posicion_5 = {
     "8.5´ X 16´ A  21´ Pies": "A",
     "8.5´ X 22´ A 27´ Pies": "B"
 }
+
 posicion_6 = {
     "1 Eje, Rin 13, 5 birlos, 800, Suspensión de balancin": "A",
     "1 Eje, Rin 15, 5 birlos, 1.500, Suspensión de balancin": "C",
@@ -70,6 +72,7 @@ posicion_6 = {
     "3 Ejes, rin 24.5, 24 m3, 30.000, Suspensión de aire": "V",
     "3 Ejes, rin 24.5, 30 m3, 45.000, Suspensión de aire": "Z"
 }
+
 posicion_7 = {
     "300 A  500": "9",
     "501 A 700": "8",
@@ -82,12 +85,14 @@ posicion_7 = {
     "1901 A 2100": "1",
     "2101 A 2300": "A"
 }
+
 posicion_8 = {
     "Sin Frenos": "9",
     "Frenos de disco": "8",
     "Frenos Electricos": "7",
     "Frenos de Aire": "6"
 }
+
 posicion_10 = {
     "2024": "R",
     "2025": "S",
@@ -95,6 +100,7 @@ posicion_10 = {
     "2027": "V",
     "2028": "W"
 }
+
 posicion_11 = {
     "Ex Hacienda la Honda, Zacatecas, México": "A"
 }
@@ -105,16 +111,16 @@ class VINBuilderApp:
         self.master = master
         self.master.title("VIN Builder - con PostgreSQL (ttkbootstrap)")
 
-        # Asegúrate de tener un archivo .ico en la misma carpeta o da la ruta absoluta
+        # Carga de icono (si tienes un .ico válido)
         try:
-            self.master.iconbitmap("Logo_Vinder.ico")  # Cambia "app_icon.ico" por tu icono
+            self.master.iconbitmap("Logo_Vinder.ico")
         except Exception:
             print("No se pudo cargar el icono. Verifica la ruta o el nombre del archivo .ico")
 
-        # Ocupa casi toda la pantalla
+        # Ocupa casi toda la pantalla (Windows)
         self.master.state("zoomed")
 
-        # Variables
+        # Variables de estado
         self.var_wmi = tb.StringVar(value="3J9")
         self.var_c4 = tb.StringVar()
         self.var_c5 = tb.StringVar()
@@ -131,14 +137,14 @@ class VINBuilderApp:
         self.main_frame = tb.Frame(self.master, padding=20)
         self.main_frame.pack(fill="both", expand=True)
 
-        # Ejecutar check de updates al inicio de la app
+        # Revisa actualizaciones con tufup
         check_for_updates()
 
         # Muestra la ventana de inicio
         self.mostrar_ventana_inicio()
 
     # ============================
-    #   LLAMADAS AL SERVIDOR
+    #  LLAMADAS AL SERVIDOR
     # ============================
     def iniciar_pago(self):
         if not self.usuario_actual:
@@ -149,8 +155,9 @@ class VINBuilderApp:
             response = requests.post(server_url, json={"user": self.usuario_actual})
             if response.status_code == 200:
                 data = response.json()
-                if "url" in data:
-                    webbrowser.open(data["url"])
+                url_pago = data.get("url", "")
+                if url_pago:
+                    webbrowser.open(url_pago)
                     messagebox.showinfo("Pago Iniciado", "Se abrió la página de pago en tu navegador.")
                 else:
                     messagebox.showerror("Error", "No se recibió una URL válida del servidor.")
@@ -166,9 +173,10 @@ class VINBuilderApp:
             return False
         try:
             url = "https://flask-stripe-server.onrender.com/funcion-principal"
-            response = requests.get(url, params={"user": self.usuario_actual})
-            data = response.json()
-            if response.status_code == 403 or "error" in data:
+            resp = requests.get(url, params={"user": self.usuario_actual})
+            data = resp.json()
+            # status_code == 403 => licencia expirada
+            if resp.status_code == 403 or "error" in data:
                 msg = data.get("error", "Licencia inválida.")
                 messagebox.showerror("Suscripción requerida", msg)
                 return False
@@ -231,18 +239,12 @@ class VINBuilderApp:
             messagebox.showerror("Error", f"No se pudo conectar a /obtener_secuencial: {e}")
             return 0
 
-    # ============ NUEVOS MÉTODOS PARA ELIMINAR VINs =============
-
+    # ============ MÉTODOS PARA ELIMINAR VINs =============
     def eliminar_todos_vins(self):
-        """
-        Llama a un endpoint en Flask para eliminar todos los VINs del usuario actual.
-        Asegúrate de tener un endpoint /eliminar_todos_vins en tu servidor.
-        """
+        """Elimina todos los VINs del usuario actual."""
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
-
-        # Verificamos que tenga licencia activa antes de proceder (opcional)
         if not self.verificar_licencia():
             return
 
@@ -251,7 +253,6 @@ class VINBuilderApp:
             resp = requests.post(url, json={"user": self.usuario_actual})
             if resp.status_code == 200:
                 messagebox.showinfo("Éxito", "Todos los VINs han sido eliminados.")
-                # Tras eliminar, refrescamos la ventana de la lista de VINs si existe
             else:
                 err = resp.json().get("error", "Error desconocido")
                 messagebox.showerror("Error", f"No se pudo eliminar todos los VINs: {err}")
@@ -259,15 +260,10 @@ class VINBuilderApp:
             messagebox.showerror("Error", f"No se pudo conectar al servidor: {e}")
 
     def eliminar_ultimo_vin(self):
-        """
-        Llama a un endpoint en Flask para eliminar el último VIN del usuario actual.
-        Asegúrate de tener un endpoint /eliminar_ultimo_vin en tu servidor.
-        """
+        """Elimina el último VIN generado por el usuario actual."""
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
-
-        # Verificamos que tenga licencia activa antes de proceder (opcional)
         if not self.verificar_licencia():
             return
 
@@ -276,7 +272,6 @@ class VINBuilderApp:
             resp = requests.post(url, json={"user": self.usuario_actual})
             if resp.status_code == 200:
                 messagebox.showinfo("Éxito", "El último VIN ha sido eliminado.")
-                # Tras eliminar, refrescamos la ventana de la lista de VINs si existe
             else:
                 err = resp.json().get("error", "Error desconocido")
                 messagebox.showerror("Error", f"No se pudo eliminar el último VIN: {err}")
@@ -284,9 +279,10 @@ class VINBuilderApp:
             messagebox.showerror("Error", f"No se pudo conectar al servidor: {e}")
 
     # ============================
-    #       VENTANAS
+    #  VENTANAS
     # ============================
     def mostrar_ventana_inicio(self):
+        """Ventana principal de bienvenida."""
         self.limpiar_main_frame()
 
         container = tb.Frame(self.main_frame, padding=40)
@@ -305,6 +301,7 @@ class VINBuilderApp:
         btn_login.pack(pady=10, ipadx=10)
 
     def ventana_crear_cuenta(self):
+        """Ventana de registro de usuarios."""
         self.limpiar_main_frame()
 
         container = tb.Frame(self.main_frame, padding=40)
@@ -355,6 +352,7 @@ class VINBuilderApp:
         btn_volver.pack(pady=5, ipadx=10)
 
     def ventana_iniciar_sesion(self):
+        """Ventana para iniciar sesión."""
         self.limpiar_main_frame()
 
         container = tb.Frame(self.main_frame, padding=40)
@@ -405,9 +403,10 @@ class VINBuilderApp:
         btn_volver.pack(pady=5, ipadx=10)
 
     def ventana_principal(self):
+        """Ventana principal tras iniciar sesión."""
         self.limpiar_main_frame()
 
-        # Frames
+        # Frames: a la izquierda opciones VIN, a la derecha acciones
         self.left_frame = tb.Frame(self.main_frame, padding=20)
         self.left_frame.pack(side="left", fill="both", expand=True)
 
@@ -425,8 +424,10 @@ class VINBuilderApp:
         tb.Label(self.left_frame, text="Código WMI:", font=("Helvetica", 12)).pack()
         tb.Entry(self.left_frame, textvariable=self.var_wmi, font=("Helvetica", 12), width=10).pack()
 
+        # Crea los OptionMenus
         self.crear_optionmenus(self.left_frame)
 
+        # Botón de generar VIN
         tb.Button(self.right_frame, text="Generar VIN", bootstyle=PRIMARY,
                   command=self.generar_vin).pack(pady=10, ipadx=5)
 
@@ -439,7 +440,7 @@ class VINBuilderApp:
         tb.Button(self.right_frame, text="Ver VINs Generados", bootstyle=INFO,
                   command=self.ventana_lista_vins).pack(pady=5, ipadx=5)
 
-        # Botones para eliminación de VINs directamente en la ventana principal (opcional):
+        # Botones para eliminación de VINs
         tb.Button(self.right_frame, text="Eliminar TODOS los VINs", bootstyle=WARNING,
                   command=self.eliminar_todos_vins).pack(pady=5, ipadx=5)
 
@@ -450,49 +451,45 @@ class VINBuilderApp:
         tb.Button(self.right_frame, text="Buscar actualizaciones", bootstyle=SECONDARY,
                   command=check_for_updates).pack(pady=10, ipadx=5)
 
+        # Botón para cerrar sesión
         tb.Button(self.right_frame, text="Cerrar Sesión", bootstyle=DANGER,
                   command=self.cerrar_sesion).pack(pady=10, ipadx=5)
 
     def crear_optionmenus(self, parent):
+        """Crea los OptionMenus para las posiciones VIN."""
         def valor_inicial(dic):
             return list(dic.keys())[0] if dic else ""
 
-        # Pos.4
         tb.Label(parent, text="Pos.4 (Modelo):", font=("Helvetica", 12)).pack()
         self.menu_c4 = tb.OptionMenu(parent, self.var_c4, valor_inicial(posicion_4), *posicion_4.keys())
         self.menu_c4.pack()
 
-        # Pos.5
         tb.Label(parent, text="Pos.5:", font=("Helvetica", 12)).pack()
         self.menu_c5 = tb.OptionMenu(parent, self.var_c5, valor_inicial(posicion_5), *posicion_5.keys())
         self.menu_c5.pack()
 
-        # Pos.6
         tb.Label(parent, text="Pos.6:", font=("Helvetica", 12)).pack()
         self.menu_c6 = tb.OptionMenu(parent, self.var_c6, valor_inicial(posicion_6), *posicion_6.keys())
         self.menu_c6.pack()
 
-        # Pos.7
         tb.Label(parent, text="Pos.7:", font=("Helvetica", 12)).pack()
         self.menu_c7 = tb.OptionMenu(parent, self.var_c7, valor_inicial(posicion_7), *posicion_7.keys())
         self.menu_c7.pack()
 
-        # Pos.8
         tb.Label(parent, text="Pos.8:", font=("Helvetica", 12)).pack()
         self.menu_c8 = tb.OptionMenu(parent, self.var_c8, valor_inicial(posicion_8), *posicion_8.keys())
         self.menu_c8.pack()
 
-        # Pos.10
         tb.Label(parent, text="Pos.10 (Año):", font=("Helvetica", 12)).pack()
         self.menu_c10 = tb.OptionMenu(parent, self.var_c10, valor_inicial(posicion_10), *posicion_10.keys())
         self.menu_c10.pack()
 
-        # Pos.11
         tb.Label(parent, text="Pos.11 (Planta):", font=("Helvetica", 12)).pack()
         self.menu_c11 = tb.OptionMenu(parent, self.var_c11, valor_inicial(posicion_11), *posicion_11.keys())
         self.menu_c11.pack()
 
     def generar_vin(self):
+        """Genera un VIN y lo guarda en la base de datos vía Flask."""
         if not self.verificar_licencia():
             return
         if not self.usuario_actual:
@@ -508,18 +505,22 @@ class VINBuilderApp:
         c10 = posicion_10.get(self.var_c10.get(), "")
         c11 = posicion_11.get(self.var_c11.get(), "")
 
+        # Validación: deben estar todos seleccionados
         if not (wmi and c4 and c5 and c6 and c7 and c8 and c10 and c11):
             messagebox.showerror("Error", "Faltan datos en uno de los catálogos.")
             return
 
+        # Obtiene el secuencial desde el servidor
         sec = self.obtener_secuencial_desde_servidor(c10)
         if sec == 0:
-            return  # se manejó el error en la función
+            return  # Se manejó el error en la función
 
         sec_str = str(sec).zfill(3)
         fixed_12_14 = "098"
-        valores = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{fixed_12_14}{sec_str}"
-        pos9 = self.calcular_posicion_9(valores)
+
+        # Para calcular el dígito verificador (pos.9)
+        valores_sin_pos9 = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{fixed_12_14}{sec_str}"
+        pos9 = self.calcular_posicion_9(valores_sin_pos9)
 
         vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{pos9}{c10}{c11}{fixed_12_14}{sec_str}"
 
@@ -539,6 +540,7 @@ class VINBuilderApp:
         }
         self.guardar_vin_en_flask(vin_data)
 
+        # Muestra el VIN en la interfaz
         if self.result_label:
             self.result_label.config(text=f"VIN/NIV: {vin_completo}", font=("Helvetica", 24, "bold"))
         else:
@@ -547,6 +549,9 @@ class VINBuilderApp:
             self.result_label.pack(pady=5)
 
     def calcular_posicion_9(self, valores):
+        """
+        Calcula el dígito verificador (pos.9) del VIN según la norma.
+        """
         sustituciones = {
             "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
             "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9, "S": 2,
@@ -554,11 +559,13 @@ class VINBuilderApp:
         }
         for i in range(10):
             sustituciones[str(i)] = i
+
         suma = sum(sustituciones.get(char, 0) for char in valores)
         resultado_modulo = suma % 11
         return "X" if resultado_modulo == 10 else str(resultado_modulo)
 
     def ventana_lista_vins(self):
+        """Muestra la lista de VINs generados en un Toplevel."""
         if not self.verificar_licencia():
             return
         if not self.usuario_actual:
@@ -584,13 +591,13 @@ class VINBuilderApp:
         for vin in vins:
             vin_completo = vin.get("vin_completo", "VIN no disponible")
             fecha_crea = vin.get("created_at", "")
-            texto_vins += f"VIN Completo: {vin_completo}\nCreado: {fecha_crea}\n" + ("-" * 40 + "\n")
+            texto_vins += f"VIN Completo: {vin_completo}\nCreado: {fecha_crea}\n" + ("-"*40 + "\n")
 
         lbl_text = tb.Label(scroll_frame, text=texto_vins,
                             justify="left", font=("Helvetica", 12, "bold"))
         lbl_text.pack(pady=10)
 
-        # Agregamos botones para eliminar en la misma ventana, si se desea
+        # Botones para eliminar en la misma ventana
         btn_eliminar_todos = tb.Button(scroll_frame, text="Eliminar TODOS los VINs",
                                        bootstyle=DANGER, command=self.eliminar_todos_vins)
         btn_eliminar_todos.pack(pady=5)
@@ -602,17 +609,25 @@ class VINBuilderApp:
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+    # ============================
+    #  UTILIDADES
+    # ============================
     def limpiar_main_frame(self):
+        """Elimina todo lo que esté dentro del self.main_frame."""
         for w in self.main_frame.winfo_children():
             w.destroy()
 
     def cerrar_sesion(self):
+        """Cerrar sesión y volver a la ventana de inicio."""
         self.usuario_actual = None
         self.mostrar_ventana_inicio()
 
 
+# ============================
+# EJECUCIÓN DEL PROGRAMA
+# ============================
 if __name__ == "__main__":
-    # Crea una ventana con ttkbootstrap, aplicando un tema moderno
+    # Crea una ventana con ttkbootstrap
     app_tk = tb.Window(themename="sandstone")
     app_tk.title("VIN Builder - ttkbootstrap Edition")
 
