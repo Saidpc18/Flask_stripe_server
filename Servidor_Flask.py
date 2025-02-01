@@ -303,7 +303,6 @@ def stripe_webhook():
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         logger.info(f"Evento recibido: {event.get('type')}")
-
         event_type = event.get("type", "")
         event_data = event.get("data", {}).get("object", {})
 
@@ -357,7 +356,6 @@ def create_checkout_session():
             return jsonify({"error": "El campo 'user' es requerido para iniciar el proceso de pago."}), 400
 
         user = data['user']
-
         success_url = os.getenv("SUCCESS_URL", "https://flask-stripe-server.onrender.com/success")
         cancel_url = os.getenv("CANCEL_URL", "https://flask-stripe-server.onrender.com/cancel")
 
@@ -415,6 +413,57 @@ def funcion_principal():
     if not license_is_active(user):
         return jsonify({"error": "Licencia expirada o usuario inexistente. Renueva para continuar."}), 403
     return jsonify({"message": "Acceso permitido a la función principal."})
+
+@app.route("/guardar_vin", methods=["POST"])
+def guardar_vin_endpoint():
+    # Se muestran algunos DEBUGs para verificar la clase y columnas de VIN
+    print("DEBUG>>> VIN class:", VIN, type(VIN), VIN.__module__)
+    print("DEBUG>>> VIN columns:", VIN.__table__.columns.keys())
+
+    data = request.json
+    user_name = data.get("user")
+    vin_completo = data.get("vin_completo")
+
+    if not user_name or not vin_completo:
+        return jsonify({"error": "Faltan datos necesarios (user, vin_completo)"}), 400
+
+    user = get_user_by_username(user_name)
+    if not user:
+        return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
+
+    try:
+        nuevo_vin = VIN(user_id=user.id, vin_completo=vin_completo)
+        db.session.add(nuevo_vin)
+        db.session.commit()
+        return jsonify({"message": "VIN guardado exitosamente"}), 200
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error al guardar VIN: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/ver_vins", methods=["GET"])
+def ver_vins():
+    user_name = request.args.get("user")
+    if not user_name:
+        return jsonify({"error": "Usuario no especificado"}), 400
+
+    user = get_user_by_username(user_name)
+    if not user:
+        return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
+
+    try:
+        vins = user.vins
+        resultado = [
+            {
+                "vin_completo": vin.vin_completo,
+                "created_at": vin.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            }
+            for vin in vins
+        ]
+        return jsonify({"vins": resultado}), 200
+    except Exception as e:
+        logger.error(f"Error al listar VINs: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/eliminar_todos_vins", methods=["POST"])
 def eliminar_todos_vins():
