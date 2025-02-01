@@ -10,7 +10,6 @@ import stripe
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
-
 print("DEBUG FILE:", __file__)
 
 # ============================
@@ -53,13 +52,9 @@ default_db_url = (
     f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
     f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
 )
-
 print(default_db_url)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
-    "DATABASE_URL",
-    default_db_url
-)
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", default_db_url)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -76,16 +71,13 @@ webhook_secret = os.getenv(
     "STRIPE_WEBHOOK_SECRET",
     "REDACTED_STRIPE_WEBHOOK_SECRET"
 )
-
 if not webhook_secret:
     logger.error("El secreto del webhook no está configurado.")
     raise ValueError("Stripe Webhook Secret es obligatorio.")
 
-
 class StripeEventSchema(Schema):
     type = fields.String(required=True)
     data = fields.Dict(required=True)
-
 
 # ============================
 # DICCIONARIO DE LETRAS → AÑO
@@ -118,18 +110,15 @@ class User(db.Model):
     def __repr__(self):
         return f"<User {self.username}>"
 
-
 class VIN(db.Model):
     __tablename__ = 'VIN'
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('usuarios.id'), nullable=False)
-
     vin_completo = db.Column(db.String(17), nullable=False)
     created_at = db.Column(db.DateTime, default=db.func.now())
 
     def __repr__(self):
         return f"<VIN {self.vin_completo}>"
-
 
 class Subscription(db.Model):
     __tablename__ = 'subscriptions'
@@ -144,7 +133,6 @@ class Subscription(db.Model):
     def __repr__(self):
         return f"<Subscription {self.subscription_id} - {self.status}>"
 
-
 class YearSequence(db.Model):
     __tablename__ = 'year_sequences'
 
@@ -153,13 +141,10 @@ class YearSequence(db.Model):
     year = db.Column(db.Integer, nullable=False)
     secuencial = db.Column(db.Integer, default=1)
 
-    __table_args__ = (
-        db.UniqueConstraint('user_id', 'year', name='uq_user_year'),
-    )
+    __table_args__ = (db.UniqueConstraint('user_id', 'year', name='uq_user_year'),)
 
     def __repr__(self):
         return f"<YearSequence user_id={self.user_id}, year={self.year}, secuencial={self.secuencial}>"
-
 
 # ============================
 # FUNCIONES AUXILIARES / LÓGICA DE NEGOCIO
@@ -181,12 +166,11 @@ def renew_license(user: User) -> bool:
 
 def update_secuencial(user: User, year_input) -> int:
     """
-    Ajustado: 'year_input' puede ser 'R' (u otra letra) o un entero.
+    Permite actualizar el secuencial del usuario según el año (o letra que representa el año).
     """
     if not user:
         return 0
 
-    # Convertir 'year_input' a entero si es letra
     if isinstance(year_input, str) and year_input in YEAR_MAP:
         year_int = YEAR_MAP[year_input]
     else:
@@ -201,10 +185,9 @@ def update_secuencial(user: User, year_input) -> int:
     db.session.commit()
     return user.secuencial
 
-
 def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
     """
-    year_input puede ser letra o número. Se convierte antes de consultar la BD.
+    Obtiene o incrementa el secuencial para un usuario dado y un año (letra o número).
     """
     user = get_user_by_username(username)
     if not user:
@@ -219,11 +202,7 @@ def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
     year_seq = YearSequence.query.filter_by(user_id=user.id, year=year_int).first()
 
     if not year_seq:
-        year_seq = YearSequence(
-            user_id=user.id,
-            year=year_int,
-            secuencial=1
-        )
+        year_seq = YearSequence(user_id=user.id, year=year_int, secuencial=1)
         db.session.add(year_seq)
         db.session.commit()
         return 1
@@ -236,7 +215,6 @@ def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
         db.session.commit()
         return year_seq.secuencial
 
-
 # ============================
 # RUTAS
 # ============================
@@ -244,8 +222,7 @@ def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
 def home():
     return "Bienvenido a la API de VIN Builder (SQLAlchemy Edition)"
 
-
-@app.route('/register', methods=['POST'])
+@app.route("/register", methods=["POST"])
 def register():
     try:
         data = request.get_json(force=True)
@@ -278,8 +255,7 @@ def register():
 
     return jsonify({"message": "Usuario registrado exitosamente."}), 201
 
-
-@app.route('/login', methods=['POST'])
+@app.route("/login", methods=["POST"])
 def login():
     data = request.json
     username = data.get("username")
@@ -297,12 +273,10 @@ def login():
     else:
         return jsonify({"error": "Contraseña incorrecta"}), 401
 
-
-@app.route('/obtener_secuencial', methods=['POST'])
+@app.route("/obtener_secuencial", methods=["POST"])
 def obtener_secuencial():
     """
-    Puede recibir year como un entero o una letra "R".
-    JSON esperado: {"user": "username", "year": "R"} o {"year": 2024}
+    JSON esperado: {"user": "username", "year": "R"} o {"user": "username", "year": 2024}
     """
     data = request.json
     username = data.get("user")
@@ -317,7 +291,6 @@ def obtener_secuencial():
     except Exception as e:
         logger.error(f"Error al obtener secuencial: {e}")
         return jsonify({"error": "Error al obtener el secuencial"}), 500
-
 
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
@@ -346,25 +319,20 @@ def stripe_webhook():
                     logger.warning(f"Usuario no encontrado: {usuario}")
             else:
                 logger.warning("El campo 'client_reference_id' no fue enviado.")
-
         elif event_type == "payment_intent.succeeded":
             logger.info(f"Manejando evento: {event_type}")
             payment_intent = event_data
             logger.info(f"PaymentIntent completado: {payment_intent.get('id')}")
-
         elif event_type in ["product.created", "price.created"]:
             logger.info(f"Manejando evento: {event_type}")
-
         elif event_type == "charge.succeeded":
             logger.info(f"Manejando evento: {event_type}")
             charge = event_data
             logger.info(f"Cargo exitoso: {charge.get('id')}")
-
         elif event_type == "charge.updated":
             logger.info(f"Manejando evento: {event_type}")
             charge = event_data
             logger.info(f"Cargo actualizado: {charge.get('id')}")
-
         else:
             logger.warning(f"Evento no manejado: {event_type}")
 
@@ -380,8 +348,7 @@ def stripe_webhook():
         logger.error(f"Error procesando el webhook: {e}")
         return jsonify({"error": "Error al procesar el webhook"}), 400
 
-
-@app.route('/create-checkout-session', methods=['POST'])
+@app.route("/create-checkout-session", methods=["POST"])
 def create_checkout_session():
     try:
         data = request.json
@@ -429,21 +396,17 @@ def create_checkout_session():
 
         logger.info(f"Sesión de pago creada correctamente para el usuario: {user}")
         return jsonify({'url': session_obj.url})
-
     except Exception as e:
         logger.error(f"Error al crear la sesión de pago: {e}")
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/success", methods=["GET"])
 def success():
     return "¡Pago exitoso! Gracias por tu compra."
 
-
 @app.route("/cancel", methods=["GET"])
 def cancel():
     return "El proceso de pago ha sido cancelado o ha fallado."
-
 
 @app.route("/funcion-principal", methods=["GET"])
 def funcion_principal():
@@ -453,60 +416,49 @@ def funcion_principal():
         return jsonify({"error": "Licencia expirada o usuario inexistente. Renueva para continuar."}), 403
     return jsonify({"message": "Acceso permitido a la función principal."})
 
-
-@app.route('/guardar_vin', methods=['POST'])
-def guardar_vin_endpoint():
-    print("DEBUG>>> VIN class:", VIN, type(VIN), VIN.__module__)
-    print("DEBUG>>> VIN columns:", VIN.__table__.columns.keys())
-
+@app.route("/eliminar_todos_vins", methods=["POST"])
+def eliminar_todos_vins():
     data = request.json
     user_name = data.get("user")
-    vin_completo = data.get("vin_completo")
-
-    if not user_name or not vin_completo:
-        return jsonify({"error": "Faltan datos necesarios (user, vin_completo)"}), 400
+    if not user_name:
+        return jsonify({"error": "Se requiere el usuario."}), 400
 
     user = get_user_by_username(user_name)
     if not user:
         return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
 
-    print("DEBUG>>>", VIN, type(VIN), VIN.__module__)
-
     try:
-        nuevo_vin = VIN(user_id=user.id, vin_completo=vin_completo)
-        db.session.add(nuevo_vin)
+        VIN.query.filter_by(user_id=user.id).delete()
         db.session.commit()
-        return jsonify({"message": "VIN guardado exitosamente"}), 200
+        return jsonify({"message": "Todos los VINs han sido eliminados."}), 200
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error al guardar VIN: {e}")
+        logger.error(f"Error al eliminar todos los VINs: {e}")
         return jsonify({"error": str(e)}), 500
 
-
-@app.route('/ver_vins', methods=['GET'])
-def ver_vins():
-    user_name = request.args.get("user")
+@app.route("/eliminar_ultimo_vin", methods=["POST"])
+def eliminar_ultimo_vin():
+    data = request.json
+    user_name = data.get("user")
     if not user_name:
-        return jsonify({"error": "Usuario no especificado"}), 400
+        return jsonify({"error": "Se requiere el usuario."}), 400
 
     user = get_user_by_username(user_name)
     if not user:
         return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
 
     try:
-        vins = user.vins
-        resultado = [
-            {
-                "vin_completo": vin.vin_completo,
-                "created_at": vin.created_at.strftime("%Y-%m-%d %H:%M:%S")
-            }
-            for vin in vins
-        ]
-        return jsonify({"vins": resultado}), 200
-    except Exception as e:
-        logger.error(f"Error al listar VINs: {e}")
-        return jsonify({"error": str(e)}), 500
+        ultimo_vin = VIN.query.filter_by(user_id=user.id).order_by(VIN.created_at.desc()).first()
+        if not ultimo_vin:
+            return jsonify({"error": "No hay VINs para eliminar."}), 404
 
+        db.session.delete(ultimo_vin)
+        db.session.commit()
+        return jsonify({"message": "El último VIN ha sido eliminado."}), 200
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error al eliminar el último VIN: {e}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     try:
