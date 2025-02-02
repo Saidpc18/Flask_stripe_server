@@ -3,6 +3,7 @@ import webbrowser
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 from tkinter import messagebox
+from tkinter.scrolledtext import ScrolledText  # Para el widget con scrollbar
 import tufup
 import subprocess
 
@@ -520,37 +521,27 @@ class VINBuilderApp:
         vins_window.title("VINs Generados")
         vins_window.geometry("500x400")
 
-        # Contenedor para canvas y scrollbar
-        container = tb.Frame(vins_window)
-        container.pack(fill="both", expand=True)
-
-        canvas = tb.Canvas(container)
-        canvas.pack(side="left", fill="both", expand=True)
-
-        scrollbar = tb.Scrollbar(container, orient="vertical", command=canvas.yview)
-        scrollbar.pack(side="right", fill="y")
-
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        scroll_frame = tb.Frame(canvas)
-        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        # Usamos ScrolledText para mostrar el contenido con scrollbar
+        st = ScrolledText(vins_window, wrap="none", font=("Helvetica", 12, "bold"))
+        st.pack(fill="both", expand=True)
 
         texto_vins = ""
         for vin in vins:
             vin_completo = vin.get("vin_completo", "VIN no disponible")
             fecha_crea = vin.get("created_at", "")
             texto_vins += f"VIN Completo: {vin_completo}\nCreado: {fecha_crea}\n" + ("-" * 40 + "\n")
-        lbl_text = tb.Label(scroll_frame, text=texto_vins,
-                            justify="left", font=("Helvetica", 12, "bold"))
-        lbl_text.pack(pady=10)
+        st.insert("end", texto_vins)
+        st.configure(state="disabled")
 
-        btn_eliminar_todos = tb.Button(scroll_frame, text="Eliminar TODOS los VINs",
+        # Contenedor para los botones de eliminación, debajo del ScrolledText
+        btn_frame = tb.Frame(vins_window)
+        btn_frame.pack(fill="x", pady=5)
+        btn_eliminar_todos = tb.Button(btn_frame, text="Eliminar TODOS los VINs",
                                        bootstyle=DANGER, command=self.eliminar_todos_vins)
-        btn_eliminar_todos.pack(pady=5)
-        btn_eliminar_ultimo = tb.Button(scroll_frame, text="Eliminar ÚLTIMO VIN",
+        btn_eliminar_todos.pack(side="left", padx=5)
+        btn_eliminar_ultimo = tb.Button(btn_frame, text="Eliminar ÚLTIMO VIN",
                                         bootstyle=DANGER, command=self.eliminar_ultimo_vin)
-        btn_eliminar_ultimo.pack(pady=5)
+        btn_eliminar_ultimo.pack(side="left", padx=5)
 
     def limpiar_main_frame(self):
         for w in self.main_frame.winfo_children():
