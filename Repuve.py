@@ -40,7 +40,7 @@ posicion_4 = {
     "JM Remolque Cuello Ganzo Cama Baja": "E",
     "JM Remolque Cuello Ganzo Cama Alta": "D",
     "JM Semirremolque Tipo Gondola": "C",
-    "JM Semirremolque Tipo Jaula Granelera": "B"
+    "JM Semirremolque Tipo Jaula Ganadera": "B"
 }
 
 posicion_5 = {
