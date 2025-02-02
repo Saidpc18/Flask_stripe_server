@@ -104,7 +104,9 @@ posicion_11 = {
     "Ex Hacienda la Honda, Zacatecas, México": "A"
 }
 
-
+# ============================
+# CLASE DE LA APLICACIÓN GUI
+# ============================
 class VINBuilderApp:
     def __init__(self, master: tb.Window):
         self.master = master
@@ -131,7 +133,7 @@ class VINBuilderApp:
 
         self.usuario_actual = None
         self.result_label = None
-        self.status_label = None  # Barra de estado para detalle de conversión
+        self.status_label = None  # Barra de estado para el detalle de conversión
 
         # Frame principal
         self.main_frame = tb.Frame(self.master, padding=20)
@@ -383,13 +385,10 @@ class VINBuilderApp:
     def ventana_principal(self):
         """Ventana principal tras iniciar sesión."""
         self.limpiar_main_frame()
-
-        # Frames: a la izquierda opciones VIN, a la derecha acciones
         self.left_frame = tb.Frame(self.main_frame, padding=20)
         self.left_frame.pack(side="left", fill="both", expand=True)
         self.right_frame = tb.Frame(self.main_frame, padding=20)
         self.right_frame.pack(side="right", fill="both", expand=True)
-
         lbl_title = tb.Label(self.main_frame,
                              text=f"Hola, {self.usuario_actual}",
                              font=("Helvetica", 16, "bold"))
@@ -449,7 +448,6 @@ class VINBuilderApp:
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
-
         wmi = self.var_wmi.get().strip().upper()
         c4 = posicion_4.get(self.var_c4.get(), "")
         c5 = posicion_5.get(self.var_c5.get(), "")
@@ -458,27 +456,17 @@ class VINBuilderApp:
         c8 = posicion_8.get(self.var_c8.get(), "")
         c10 = posicion_10.get(self.var_c10.get(), "")
         c11 = posicion_11.get(self.var_c11.get(), "")
-
-        # Validación: deben estar todos seleccionados
         if not (wmi and c4 and c5 and c6 and c7 and c8 and c10 and c11):
             messagebox.showerror("Error", "Faltan datos en uno de los catálogos.")
             return
-
-        # Obtiene el secuencial desde el servidor
         sec = self.obtener_secuencial_desde_servidor(c10)
         if sec == 0:
-            return  # Se manejó el error en la función
-
+            return
         sec_str = str(sec).zfill(3)
         fixed_12_14 = "098"
-
-        # Para calcular el dígito verificador (posición 9)
-        # Se arma una cadena sin el dígito verificador para el cálculo
         valores_sin_pos9 = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{fixed_12_14}{sec_str}"
         pos9 = self.calcular_posicion_9(valores_sin_pos9)
-
         vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{pos9}{c10}{c11}{fixed_12_14}{sec_str}"
-
         vin_data = {
             "wmi": wmi,
             "c4": c4,
@@ -494,8 +482,6 @@ class VINBuilderApp:
             "vin_completo": vin_completo,
         }
         self.guardar_vin_en_flask(vin_data)
-
-        # Muestra el VIN en la interfaz
         if self.result_label:
             self.result_label.config(text=f"VIN/NIV: {vin_completo}", font=("Helvetica", 24, "bold"))
         else:
@@ -507,7 +493,7 @@ class VINBuilderApp:
         """
         Calcula el dígito verificador (posición 9) del VIN.
         Además, construye una cadena con el detalle de la conversión y la muestra
-        en una barra de estado en la parte baja de la pantalla, centrada y con ajuste de texto.
+        en una barra de estado en la parte baja de la pantalla en dos líneas horizontales.
         """
         sustituciones = {
             "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
@@ -517,19 +503,26 @@ class VINBuilderApp:
         for i in range(10):
             sustituciones[str(i)] = i
 
-        conversion_details = "Detalle de la conversión:\n"
+        # Creamos una lista de cadenas para cada conversión
+        mapping = []
         suma = 0
         for char in valores:
             valor_num = sustituciones.get(char, 0)
-            conversion_details += f"  '{char}' → {valor_num}\n"
+            mapping.append(f"'{char}'→{valor_num}")
             suma += valor_num
+
+        # Dividimos la lista en dos columnas (dos líneas horizontales)
+        mitad = len(mapping) // 2
+        linea1 = "    ".join(mapping[:mitad])
+        linea2 = "    ".join(mapping[mitad:])
+        conversion_details = "Detalle de la conversión:\n" + linea1 + "\n" + linea2 + "\n"
         conversion_details += f"Suma total: {suma}\n"
         resultado_modulo = suma % 11
         conversion_details += f"Módulo 11: {resultado_modulo}\n"
         digito_verificador = "X" if resultado_modulo == 10 else str(resultado_modulo)
         conversion_details += f"Dígito verificador: {digito_verificador}"
 
-        # Actualiza o crea una barra de estado en la parte baja de la ventana, centrada y con ajuste de texto
+        # Actualiza o crea una barra de estado en la parte baja, centrada y con ajuste de texto
         if self.status_label:
             self.status_label.config(text=conversion_details)
         else:
@@ -550,22 +543,17 @@ class VINBuilderApp:
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
-
         vins = self.ver_vins_en_flask()
         vins_window = tb.Toplevel(self.master)
         vins_window.title("VINs Generados")
         vins_window.geometry("500x400")
-
-        # Crear un canvas para el scroll
+        # Crear un canvas y un frame interno para el contenido con barra de desplazamiento
         canvas = tb.Canvas(vins_window)
         scrollbar = tb.Scrollbar(vins_window, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
-
-        # Crear un frame interno que contendrá el contenido
         scroll_frame = tb.Frame(canvas)
         scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
-
         # Agregar el contenido: listado de VINs
         texto_vins = ""
         for vin in vins:
@@ -575,15 +563,13 @@ class VINBuilderApp:
         lbl_text = tb.Label(scroll_frame, text=texto_vins,
                             justify="left", font=("Helvetica", 12, "bold"))
         lbl_text.pack(pady=10)
-
-        # Botones para eliminar en la misma ventana
+        # Botones para eliminar
         btn_eliminar_todos = tb.Button(scroll_frame, text="Eliminar TODOS los VINs",
                                        bootstyle=DANGER, command=self.eliminar_todos_vins)
         btn_eliminar_todos.pack(pady=5)
         btn_eliminar_ultimo = tb.Button(scroll_frame, text="Eliminar ÚLTIMO VIN",
                                         bootstyle=DANGER, command=self.eliminar_ultimo_vin)
         btn_eliminar_ultimo.pack(pady=5)
-
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
@@ -605,9 +591,7 @@ class VINBuilderApp:
 # EJECUCIÓN DEL PROGRAMA
 # ============================
 if __name__ == "__main__":
-    # Crea una ventana con ttkbootstrap, aplicando un tema moderno
     app_tk = tb.Window(themename="sandstone")
     app_tk.title("VIN Builder - ttkbootstrap Edition")
-    # Instancia e inicia la app
     VINBuilderApp(app_tk)
     app_tk.mainloop()
