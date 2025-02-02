@@ -1,12 +1,14 @@
 import os
+import io
 import logging
 from datetime import datetime, timedelta
 import bcrypt
-
-from flask import Flask, request, jsonify
-from marshmallow import Schema, fields, ValidationError
+import pandas as pd
 import stripe
+import subprocess
 
+from flask import Flask, request, jsonify, send_file
+from marshmallow import Schema, fields, ValidationError
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
@@ -20,7 +22,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("app.log"),  # Logs en archivo
-        logging.StreamHandler()  # Logs en consola
+        logging.StreamHandler()          # Logs en consola
     ]
 )
 logger = logging.getLogger(__name__)
@@ -488,6 +490,50 @@ def ver_vins():
         return jsonify({"error": str(e)}), 500
 
 
+# NUEVO ENDPOINT: Exportar VINs a Excel
+@app.route("/export_vins", methods=["GET"])
+def export_vins():
+    """
+    Exporta la lista de VINs del usuario en formato Excel.
+    Se espera recibir el usuario en el query string, por ejemplo: /export_vins?user=nombre_usuario
+    """
+    user_name = request.args.get("user")
+    if not user_name:
+        return jsonify({"error": "Se requiere el parámetro 'user'"}), 400
+
+    user = get_user_by_username(user_name)
+    if not user:
+        return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
+
+    try:
+        vins = user.vins
+        data = []
+        for vin in vins:
+            data.append({
+                "VIN": vin.vin_completo,
+                "Fecha de Creación": vin.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            })
+        # Crear un DataFrame de pandas
+        df = pd.DataFrame(data)
+
+        # Crear un buffer en memoria y escribir el Excel en él
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="VINs")
+            writer.save()
+        output.seek(0)
+
+        return send_file(
+            output,
+            as_attachment=True,
+            download_name="vins.xlsx",  # Para versiones antiguas de Flask usar attachment_filename
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        logger.error(f"Error al exportar VINs: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/eliminar_todos_vins", methods=["POST"])
 def eliminar_todos_vins():
     data = request.json
@@ -535,12 +581,11 @@ def eliminar_ultimo_vin():
 
         # Extraer el código de año (c10) del VIN
         # La estructura del VIN es: {wmi}{c4}{c5}{c6}{c7}{c8}{pos9}{c10}{c11}{fixed_12_14}{secuencial}
-        # Asumimos que el carácter en la posición 9 (índice 9, 0-indexed) corresponde a c10.
+        # Suponemos que el carácter en la posición 9 (0-indexado) corresponde a c10.
         vin_str = ultimo_vin.vin_completo
         if len(vin_str) < 10:
             return jsonify({"error": "El VIN almacenado no tiene el formato esperado."}), 500
         year_letter = vin_str[9]  # índice 9
-        # Convertir la letra a año usando YEAR_MAP
         if year_letter not in YEAR_MAP:
             return jsonify({"error": "El VIN no contiene un código de año válido."}), 500
         year_int = YEAR_MAP[year_letter]
