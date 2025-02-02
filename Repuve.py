@@ -15,7 +15,6 @@ def check_for_updates():
     En caso de que exista, se actualiza automáticamente.
     """
     try:
-        # Verificar si hay una nueva versión
         result = subprocess.run(["tufup", "check"], capture_output=True, text=True)
         if "New version available" in result.stdout:
             print("Nueva versión disponible. Actualizando...")
@@ -111,17 +110,11 @@ class VINBuilderApp:
     def __init__(self, master: tb.Window):
         self.master = master
         self.master.title("VIN Builder - con PostgreSQL (ttkbootstrap)")
-
-        # Carga de icono (si tienes un .ico válido)
         try:
             self.master.iconbitmap("Logo_Vinder.ico")
         except Exception:
             print("No se pudo cargar el icono. Verifica la ruta o el nombre del archivo .ico")
-
-        # Ocupa casi toda la pantalla (Windows)
         self.master.state("zoomed")
-
-        # Variables de estado
         self.var_wmi = tb.StringVar(value="3J9")
         self.var_c4 = tb.StringVar()
         self.var_c5 = tb.StringVar()
@@ -130,19 +123,12 @@ class VINBuilderApp:
         self.var_c8 = tb.StringVar()
         self.var_c10 = tb.StringVar()
         self.var_c11 = tb.StringVar()
-
         self.usuario_actual = None
         self.result_label = None
         self.status_label = None  # Barra de estado para el detalle de conversión
-
-        # Frame principal
         self.main_frame = tb.Frame(self.master, padding=20)
         self.main_frame.pack(fill="both", expand=True)
-
-        # Revisa actualizaciones con tufup
         check_for_updates()
-
-        # Muestra la ventana de inicio
         self.mostrar_ventana_inicio()
 
     # ============================
@@ -221,9 +207,6 @@ class VINBuilderApp:
             return []
 
     def obtener_secuencial_desde_servidor(self, year_code):
-        """
-        Llama a /obtener_secuencial en Flask y retorna el secuencial (int).
-        """
         url = "https://flask-stripe-server.onrender.com/obtener_secuencial"
         payload = {"user": self.usuario_actual, "year": year_code}
         try:
@@ -241,7 +224,6 @@ class VINBuilderApp:
 
     # ============ MÉTODOS PARA ELIMINAR VINs =============
     def eliminar_todos_vins(self):
-        """Elimina todos los VINs del usuario actual y reinicia el secuencial."""
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
@@ -259,7 +241,6 @@ class VINBuilderApp:
             messagebox.showerror("Error", f"No se pudo conectar al servidor: {e}")
 
     def eliminar_ultimo_vin(self):
-        """Elimina el último VIN generado por el usuario actual y retrocede el secuencial."""
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
@@ -280,7 +261,6 @@ class VINBuilderApp:
     #  VENTANAS
     # ============================
     def mostrar_ventana_inicio(self):
-        """Ventana principal de bienvenida."""
         self.limpiar_main_frame()
         container = tb.Frame(self.main_frame, padding=40)
         container.pack(expand=True)
@@ -295,7 +275,6 @@ class VINBuilderApp:
         btn_login.pack(pady=10, ipadx=10)
 
     def ventana_crear_cuenta(self):
-        """Ventana de registro de usuarios."""
         self.limpiar_main_frame()
         container = tb.Frame(self.main_frame, padding=40)
         container.pack(expand=True)
@@ -339,7 +318,6 @@ class VINBuilderApp:
         btn_volver.pack(pady=5, ipadx=10)
 
     def ventana_iniciar_sesion(self):
-        """Ventana para iniciar sesión."""
         self.limpiar_main_frame()
         container = tb.Frame(self.main_frame, padding=40)
         container.pack(expand=True)
@@ -383,7 +361,6 @@ class VINBuilderApp:
         btn_volver.pack(pady=5, ipadx=10)
 
     def ventana_principal(self):
-        """Ventana principal tras iniciar sesión."""
         self.limpiar_main_frame()
         self.left_frame = tb.Frame(self.main_frame, padding=20)
         self.left_frame.pack(side="left", fill="both", expand=True)
@@ -416,7 +393,6 @@ class VINBuilderApp:
                   command=self.cerrar_sesion).pack(pady=10, ipadx=5)
 
     def crear_optionmenus(self, parent):
-        """Crea los OptionMenus para las posiciones VIN."""
         def valor_inicial(dic):
             return list(dic.keys())[0] if dic else ""
         tb.Label(parent, text="Pos.4 (Modelo):", font=("Helvetica", 12)).pack()
@@ -442,7 +418,6 @@ class VINBuilderApp:
         self.menu_c11.pack()
 
     def generar_vin(self):
-        """Genera un VIN y lo guarda en la base de datos vía Flask."""
         if not self.verificar_licencia():
             return
         if not self.usuario_actual:
@@ -503,7 +478,6 @@ class VINBuilderApp:
         for i in range(10):
             sustituciones[str(i)] = i
 
-        # Creamos una lista de cadenas para cada conversión
         mapping = []
         suma = 0
         for char in valores:
@@ -511,7 +485,6 @@ class VINBuilderApp:
             mapping.append(f"'{char}'→{valor_num}")
             suma += valor_num
 
-        # Dividimos la lista en dos columnas (dos líneas horizontales)
         mitad = len(mapping) // 2
         linea1 = "    ".join(mapping[:mitad])
         linea2 = "    ".join(mapping[mitad:])
@@ -522,7 +495,6 @@ class VINBuilderApp:
         digito_verificador = "X" if resultado_modulo == 10 else str(resultado_modulo)
         conversion_details += f"Dígito verificador: {digito_verificador}"
 
-        # Actualiza o crea una barra de estado en la parte baja, centrada y con ajuste de texto
         if self.status_label:
             self.status_label.config(text=conversion_details)
         else:
@@ -547,14 +519,23 @@ class VINBuilderApp:
         vins_window = tb.Toplevel(self.master)
         vins_window.title("VINs Generados")
         vins_window.geometry("500x400")
-        # Crear un canvas y un frame interno para el contenido con barra de desplazamiento
-        canvas = tb.Canvas(vins_window)
-        scrollbar = tb.Scrollbar(vins_window, orient="vertical", command=canvas.yview)
+
+        # Contenedor para canvas y scrollbar
+        container = tb.Frame(vins_window)
+        container.pack(fill="both", expand=True)
+
+        canvas = tb.Canvas(container)
+        canvas.pack(side="left", fill="both", expand=True)
+
+        scrollbar = tb.Scrollbar(container, orient="vertical", command=canvas.yview)
+        scrollbar.pack(side="right", fill="y")
+
         canvas.configure(yscrollcommand=scrollbar.set)
+
         scroll_frame = tb.Frame(canvas)
         scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
-        # Agregar el contenido: listado de VINs
+
         texto_vins = ""
         for vin in vins:
             vin_completo = vin.get("vin_completo", "VIN no disponible")
@@ -563,29 +544,21 @@ class VINBuilderApp:
         lbl_text = tb.Label(scroll_frame, text=texto_vins,
                             justify="left", font=("Helvetica", 12, "bold"))
         lbl_text.pack(pady=10)
-        # Botones para eliminar
+
         btn_eliminar_todos = tb.Button(scroll_frame, text="Eliminar TODOS los VINs",
                                        bootstyle=DANGER, command=self.eliminar_todos_vins)
         btn_eliminar_todos.pack(pady=5)
         btn_eliminar_ultimo = tb.Button(scroll_frame, text="Eliminar ÚLTIMO VIN",
                                         bootstyle=DANGER, command=self.eliminar_ultimo_vin)
         btn_eliminar_ultimo.pack(pady=5)
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
 
-    # ============================
-    #  UTILIDADES
-    # ============================
     def limpiar_main_frame(self):
-        """Elimina todo lo que esté dentro del self.main_frame."""
         for w in self.main_frame.winfo_children():
             w.destroy()
 
     def cerrar_sesion(self):
-        """Cerrar sesión y volver a la ventana de inicio."""
         self.usuario_actual = None
         self.mostrar_ventana_inicio()
-
 
 # ============================
 # EJECUCIÓN DEL PROGRAMA
