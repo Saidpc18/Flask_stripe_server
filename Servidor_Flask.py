@@ -504,10 +504,9 @@ def eliminar_todos_vins():
         VIN.query.filter_by(user_id=user.id).delete()
         db.session.commit()
 
-        # Reiniciar todos los secuenciales (en YearSequence) para este usuario
-        year_seqs = YearSequence.query.filter_by(user_id=user.id).all()
-        for ys in year_seqs:
-            ys.secuencial = 1
+        # Eliminar las entradas en YearSequence para este usuario,
+        # de modo que el próximo VIN cree un registro nuevo con secuencial = 1.
+        YearSequence.query.filter_by(user_id=user.id).delete()
         db.session.commit()
 
         return jsonify({"message": "Todos los VINs han sido eliminados y el secuencial se ha reiniciado."}), 200
