@@ -491,6 +491,7 @@ def ver_vins():
 
 
 # NUEVO ENDPOINT: Exportar VINs a Excel
+# NUEVO ENDPOINT: Exportar VINs a Excel
 @app.route("/export_vins", methods=["GET"])
 def export_vins():
     """
@@ -513,25 +514,26 @@ def export_vins():
                 "VIN": vin.vin_completo,
                 "Fecha de Creación": vin.created_at.strftime("%Y-%m-%d %H:%M:%S")
             })
-        # Crear un DataFrame de pandas
+        # Crear un DataFrame de pandas con los datos
         df = pd.DataFrame(data)
 
         # Crear un buffer en memoria y escribir el Excel en él
         output = io.BytesIO()
+        # Con el uso de 'with' ya no es necesario llamar a writer.save()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             df.to_excel(writer, index=False, sheet_name="VINs")
-            writer.save()
         output.seek(0)
 
         return send_file(
             output,
             as_attachment=True,
-            download_name="vins.xlsx",  # Para versiones antiguas de Flask usar attachment_filename
+            download_name="vins.xlsx",  # Para versiones anteriores de Flask, usa attachment_filename
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     except Exception as e:
         logger.error(f"Error al exportar VINs: {e}")
         return jsonify({"error": str(e)}), 500
+
 
 
 @app.route("/eliminar_todos_vins", methods=["POST"])
