@@ -549,9 +549,6 @@ class VINBuilderApp:
             self.result_label.pack(pady=5)
 
     def calcular_posicion_9(self, valores):
-        """
-        Calcula el dígito verificador (pos.9) del VIN según la norma.
-        """
         sustituciones = {
             "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
             "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9, "S": 2,
@@ -560,8 +557,16 @@ class VINBuilderApp:
         for i in range(10):
             sustituciones[str(i)] = i
 
-        suma = sum(sustituciones.get(char, 0) for char in valores)
+        suma = 0
+        print("Detalle de la conversión:")
+        for char in valores:
+            valor_num = sustituciones.get(char, 0)
+            print(f"  Caracter '{char}' → {valor_num}")
+            suma += valor_num
+        print(f"Suma total de los valores: {suma}")
+
         resultado_modulo = suma % 11
+        print(f"Resultado de la suma módulo 11: {resultado_modulo}")
         return "X" if resultado_modulo == 10 else str(resultado_modulo)
 
     def ventana_lista_vins(self):
