@@ -25,7 +25,6 @@ def check_for_updates():
     except Exception as e:
         print(f"Error al verificar actualizaciones: {e}")
 
-
 # ============================
 #  CATÁLOGOS (LOCALES)
 # ============================
@@ -132,6 +131,7 @@ class VINBuilderApp:
 
         self.usuario_actual = None
         self.result_label = None
+        self.status_label = None  # Label para mostrar el detalle de la conversión
 
         # Frame principal
         self.main_frame = tb.Frame(self.master, padding=20)
@@ -175,7 +175,6 @@ class VINBuilderApp:
             url = "https://flask-stripe-server.onrender.com/funcion-principal"
             resp = requests.get(url, params={"user": self.usuario_actual})
             data = resp.json()
-            # status_code == 403 => licencia expirada
             if resp.status_code == 403 or "error" in data:
                 msg = data.get("error", "Licencia inválida.")
                 messagebox.showerror("Suscripción requerida", msg)
@@ -241,7 +240,7 @@ class VINBuilderApp:
 
     # ============ MÉTODOS PARA ELIMINAR VINs =============
     def eliminar_todos_vins(self):
-        """Elimina todos los VINs del usuario actual."""
+        """Elimina todos los VINs del usuario actual y reinicia el secuencial."""
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
@@ -252,7 +251,7 @@ class VINBuilderApp:
             url = "https://flask-stripe-server.onrender.com/eliminar_todos_vins"
             resp = requests.post(url, json={"user": self.usuario_actual})
             if resp.status_code == 200:
-                messagebox.showinfo("Éxito", "Todos los VINs han sido eliminados.")
+                messagebox.showinfo("Éxito", "Todos los VINs han sido eliminados y el secuencial se ha reiniciado.")
             else:
                 err = resp.json().get("error", "Error desconocido")
                 messagebox.showerror("Error", f"No se pudo eliminar todos los VINs: {err}")
@@ -260,7 +259,7 @@ class VINBuilderApp:
             messagebox.showerror("Error", f"No se pudo conectar al servidor: {e}")
 
     def eliminar_ultimo_vin(self):
-        """Elimina el último VIN generado por el usuario actual."""
+        """Elimina el último VIN generado por el usuario actual y retrocede el secuencial."""
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
@@ -271,7 +270,7 @@ class VINBuilderApp:
             url = "https://flask-stripe-server.onrender.com/eliminar_ultimo_vin"
             resp = requests.post(url, json={"user": self.usuario_actual})
             if resp.status_code == 200:
-                messagebox.showinfo("Éxito", "El último VIN ha sido eliminado.")
+                messagebox.showinfo("Éxito", "El último VIN ha sido eliminado y el secuencial se ha actualizado.")
             else:
                 err = resp.json().get("error", "Error desconocido")
                 messagebox.showerror("Error", f"No se pudo eliminar el último VIN: {err}")
@@ -518,7 +517,8 @@ class VINBuilderApp:
         sec_str = str(sec).zfill(3)
         fixed_12_14 = "098"
 
-        # Para calcular el dígito verificador (pos.9)
+        # Para calcular el dígito verificador (posición 9)
+        # Se arma una cadena sin el dígito verificador para el cálculo
         valores_sin_pos9 = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{fixed_12_14}{sec_str}"
         pos9 = self.calcular_posicion_9(valores_sin_pos9)
 
@@ -549,6 +549,11 @@ class VINBuilderApp:
             self.result_label.pack(pady=5)
 
     def calcular_posicion_9(self, valores):
+        """
+        Calcula el dígito verificador (posición 9) del VIN.
+        Además, construye una cadena con el detalle de la conversión y la muestra
+        en una barra de estado en la parte baja de la pantalla.
+        """
         sustituciones = {
             "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
             "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9, "S": 2,
@@ -557,17 +562,25 @@ class VINBuilderApp:
         for i in range(10):
             sustituciones[str(i)] = i
 
+        conversion_details = "Detalle de la conversión:\n"
         suma = 0
-        print("Detalle de la conversión:")
         for char in valores:
             valor_num = sustituciones.get(char, 0)
-            print(f"  Caracter '{char}' → {valor_num}")
+            conversion_details += f"  '{char}' → {valor_num}\n"
             suma += valor_num
-        print(f"Suma total de los valores: {suma}")
-
+        conversion_details += f"Suma total: {suma}\n"
         resultado_modulo = suma % 11
-        print(f"Resultado de la suma módulo 11: {resultado_modulo}")
-        return "X" if resultado_modulo == 10 else str(resultado_modulo)
+        conversion_details += f"Módulo 11: {resultado_modulo}\n"
+        digito_verificador = "X" if resultado_modulo == 10 else str(resultado_modulo)
+        conversion_details += f"Dígito verificador: {digito_verificador}"
+
+        # Actualiza o crea una barra de estado en la parte baja de la ventana
+        if self.status_label:
+            self.status_label.config(text=conversion_details)
+        else:
+            self.status_label = tb.Label(self.master, text=conversion_details, font=("Helvetica", 10), bootstyle="secondary")
+            self.status_label.pack(side="bottom", fill="x")
+        return digito_verificador
 
     def ventana_lista_vins(self):
         """Muestra la lista de VINs generados en un Toplevel."""
@@ -632,7 +645,7 @@ class VINBuilderApp:
 # EJECUCIÓN DEL PROGRAMA
 # ============================
 if __name__ == "__main__":
-    # Crea una ventana con ttkbootstrap
+    # Crea una ventana con ttkbootstrap, aplicando un tema moderno
     app_tk = tb.Window(themename="sandstone")
     app_tk.title("VIN Builder - ttkbootstrap Edition")
 
