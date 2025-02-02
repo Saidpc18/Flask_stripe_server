@@ -6,6 +6,8 @@ from tkinter import messagebox, filedialog  # Se importa filedialog para guardar
 from tkinter.scrolledtext import ScrolledText  # Para el widget con scrollbar
 import tufup
 import subprocess
+import xlsxwriter
+
 
 # URL donde GitHub almacena las actualizaciones (para 'tufup')
 repo_url = "https://github.com/Saidpc18/Flask_stripe_server/releases/latest/download/"
