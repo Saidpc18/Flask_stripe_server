@@ -124,7 +124,7 @@ class VinderApp:
     def __init__(self, master: tb.Window):
         self.master = master
         self.master.title("Vinder")
-        # Cargar el logo (ahora que la ventana existe)
+        # Cargar el logo (una vez creada la ventana)
         self.load_logo()
         set_icon(self.master, self.logo_photo_small)
         self.master.state("zoomed")
@@ -140,16 +140,16 @@ class VinderApp:
         self.usuario_actual = None
         self.result_label = None
         self.status_label = None
+        # Frame principal
         self.main_frame = tb.Frame(self.master, padding=20)
         self.main_frame.pack(fill="both", expand=True)
-        # No se llama a check_for_updates() automáticamente
         self.mostrar_ventana_inicio()
 
     def load_logo(self):
         """Carga el logo y lo guarda en atributos de la instancia."""
         try:
             original_logo = Image.open("Vinder_logo.ico")
-            # Usar Resampling.LANCZOS en lugar de ANTIALIAS
+            # Usar Resampling.LANCZOS en lugar de ANTIALIAS (más profesional)
             self.logo_small = original_logo.resize((32, 32), Image.Resampling.LANCZOS)
             self.logo_photo_small = ImageTk.PhotoImage(self.logo_small)
             self.logo_large = original_logo.resize((128, 128), Image.Resampling.LANCZOS)
@@ -461,6 +461,7 @@ class VinderApp:
                   command=self.eliminar_todos_vins).pack(pady=5, ipadx=5)
         tb.Button(self.right_frame, text="Eliminar ÚLTIMO VIN", bootstyle=WARNING,
                   command=self.eliminar_ultimo_vin).pack(pady=5, ipadx=5)
+        # Botón para buscar actualizaciones (se ha restaurado)
         tb.Button(self.right_frame, text="Buscar actualizaciones", bootstyle=SECONDARY,
                   command=check_for_updates).pack(pady=10, ipadx=5)
         tb.Button(self.right_frame, text="Cerrar Sesión", bootstyle=DANGER,
@@ -1235,6 +1236,6 @@ class VinderApp:
 if __name__ == "__main__":
     app_tk = tb.Window(themename="sandstone")
     app_tk.title("Vinder - ttkbootstrap Edition")
-    set_icon(app_tk, None)  # Se llamará a load_logo en la clase, por lo que aquí se puede omitir o pasar None
+    set_icon(app_tk, None)  # Se cargará el logo desde la clase; aquí se omite
     VinderApp(app_tk)
     app_tk.mainloop()
