@@ -120,7 +120,7 @@ def set_icon(window, logo_small):
 # ============================
 # CLASE DE LA APLICACIÓN GUI
 # ============================
-class VINBuilderApp:
+class VinderApp:
     def __init__(self, master: tb.Window):
         self.master = master
         self.master.title("Vinder")
