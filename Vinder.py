@@ -29,15 +29,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def set_icon(window, logo_small=None):
+def set_icon(window):
     try:
-        # Obtiene la ruta del ejecutable (si está empaquetado) o la del script actual
-        base_path = getattr(sys, '_MEIPASS', os.path.abspath(os.path.dirname(__file__)))
-        icon_path = os.path.join(base_path, "Vinder_logo.ico")
-        if os.path.exists(icon_path):
-            window.iconbitmap(icon_path)
+        # Verifica si está en un entorno empaquetado
+        if getattr(sys, '_MEIPASS', False):
+            base_path = sys._MEIPASS  # PyInstaller guarda los archivos aquí
         else:
-            print(f"El ícono no se encontró en: {icon_path}")
+            base_path = os.path.abspath(".")
+
+        icon_path = os.path.join(base_path, "Vinder_logo.ico")
+        window.iconbitmap(icon_path)
     except Exception as e:
         print("No se pudo configurar el icono:", e)
 
