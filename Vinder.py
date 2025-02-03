@@ -29,12 +29,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def set_icon(window):
+def set_icon(window, logo_small=None):
     try:
-        # Obtiene la ruta del ejecutable o del script actual
-        base_path = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        # Obtiene la ruta del ejecutable (si está empaquetado) o la del script actual
+        base_path = getattr(sys, '_MEIPASS', os.path.abspath(os.path.dirname(__file__)))
         icon_path = os.path.join(base_path, "Vinder_logo.ico")
-        window.iconbitmap(icon_path)
+        if os.path.exists(icon_path):
+            window.iconbitmap(icon_path)
+        else:
+            print(f"El ícono no se encontró en: {icon_path}")
     except Exception as e:
         print("No se pudo configurar el icono:", e)
 
