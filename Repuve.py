@@ -936,7 +936,7 @@ class VinderApp:
         if self.logo_photo_large is not None:
             logo_label = tb.Label(container, image=self.logo_photo_large)
             logo_label.pack(pady=10)
-        lbl = tb.Label(container, text="Bienvenido a VIN Builder",
+        lbl = tb.Label(container, text="Bienvenido a Vinder",
                        font=("Helvetica", 22, "bold"))
         lbl.pack(pady=20)
         btn_crear = tb.Button(container, text="Crear Cuenta", bootstyle=PRIMARY,
