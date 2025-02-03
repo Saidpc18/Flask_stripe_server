@@ -19,7 +19,7 @@ from PIL import Image, ImageTk  # Importar Pillow
 # CONFIGURACIÓN DE LOGGING
 # ============================
 logging.basicConfig(
-    level=logging.DEBUG,  # Cambia a INFO o WARNING en producción
+    level=logging.INFO,  # Cambia a INFO o WARNING en producción
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("app.log"),
