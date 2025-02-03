@@ -607,6 +607,23 @@ def eliminar_ultimo_vin():
         logger.error(f"Error al eliminar el último VIN: {e}")
         return jsonify({"error": str(e)}), 500
 
+@app.route("/check_updates", methods=["GET"])
+def check_updates():
+    """
+    Verifica si hay una nueva versión disponible usando 'tufup'.
+    Si la hay, se actualiza automáticamente y se retorna un mensaje.
+    """
+    try:
+        result = subprocess.run(["tufup", "check"], capture_output=True, text=True)
+        if "New version available" in result.stdout:
+            subprocess.run(["tufup", "update"])
+            return jsonify({"message": "Nueva versión disponible. Se ha actualizado la aplicación."}), 200
+        else:
+            return jsonify({"message": "No hay actualizaciones disponibles."}), 200
+    except Exception as e:
+        logger.error(f"Error al verificar actualizaciones: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
     try:
