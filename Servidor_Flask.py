@@ -167,7 +167,7 @@ def renew_license(user: User) -> bool:
 def update_secuencial(user: User, year_input) -> int:
     """
     Permite actualizar el secuencial del usuario según el año (o letra que representa el año).
-    Reinicia a 1 después de 100.
+    Reinicia a 1 después de 900.
     """
     if not user:
         return 0
@@ -181,8 +181,8 @@ def update_secuencial(user: User, year_input) -> int:
         user.secuencial = 1
         user.last_year = year_int
     else:
-        # Reinicia a 1 después de 100
-        if user.secuencial >= 100:
+        # Reinicia a 1 después de 999
+        if user.secuencial >= 999:
             user.secuencial = 1
         else:
             user.secuencial += 1
@@ -213,7 +213,7 @@ def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
         db.session.commit()
         return 1
     else:
-        if year_seq.secuencial >= 100:
+        if year_seq.secuencial >= 999:
             year_seq.secuencial = 1
         else:
             year_seq.secuencial += 1
