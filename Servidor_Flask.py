@@ -1,14 +1,14 @@
 import os
-import io
 import sys
+import io
 import logging
 from datetime import datetime, timedelta
 import subprocess
 import bcrypt
 import pandas as pd
 import stripe
-
-from flask import Flask, request, jsonify, send_file
+import requests
+from flask import Flask, request, jsonify, send_file, Response
 from marshmallow import Schema, fields, ValidationError
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
@@ -23,7 +23,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("app.log"),  # Logs en archivo
-        logging.StreamHandler()          # Logs en consola
+        logging.StreamHandler()  # Logs en consola
     ]
 )
 logger = logging.getLogger(__name__)
@@ -75,9 +75,11 @@ if not webhook_secret:
     logger.error("El secreto del webhook no está configurado.")
     raise ValueError("Stripe Webhook Secret es obligatorio.")
 
+
 class StripeEventSchema(Schema):
     type = fields.String(required=True)
     data = fields.Dict(required=True)
+
 
 # ============================
 # DICCIONARIO DE LETRAS → AÑO
@@ -90,6 +92,7 @@ YEAR_MAP = {
     "W": 2028,
     "P": 2029,
 }
+
 
 # ============================
 # MODELOS SQLALCHEMY
@@ -110,6 +113,7 @@ class User(db.Model):
     def __repr__(self):
         return f"<User {self.username}>"
 
+
 class VIN(db.Model):
     __tablename__ = 'VIN'
     id = db.Column(db.Integer, primary_key=True)
@@ -119,6 +123,7 @@ class VIN(db.Model):
 
     def __repr__(self):
         return f"<VIN {self.vin_completo}>"
+
 
 class Subscription(db.Model):
     __tablename__ = 'subscriptions'
@@ -133,6 +138,7 @@ class Subscription(db.Model):
     def __repr__(self):
         return f"<Subscription {self.subscription_id} - {self.status}>"
 
+
 class YearSequence(db.Model):
     __tablename__ = 'year_sequences'
 
@@ -146,16 +152,19 @@ class YearSequence(db.Model):
     def __repr__(self):
         return f"<YearSequence user_id={self.user_id}, year={self.year}, secuencial={self.secuencial}>"
 
+
 # ============================
 # FUNCIONES AUXILIARES / LÓGICA DE NEGOCIO
 # ============================
 def get_user_by_username(username):
     return User.query.filter_by(username=username).first()
 
+
 def license_is_active(user: User) -> bool:
     if not user or not user.license_expiration:
         return False
     return user.license_expiration > datetime.now()
+
 
 def renew_license(user: User) -> bool:
     if not user:
@@ -164,10 +173,11 @@ def renew_license(user: User) -> bool:
     db.session.commit()
     return True
 
+
 def update_secuencial(user: User, year_input) -> int:
     """
     Permite actualizar el secuencial del usuario según el año (o letra que representa el año).
-    Reinicia a 1 después de 900.
+    Reinicia a 1 después de 999.
     """
     if not user:
         return 0
@@ -181,7 +191,6 @@ def update_secuencial(user: User, year_input) -> int:
         user.secuencial = 1
         user.last_year = year_int
     else:
-        # Reinicia a 1 después de 999
         if user.secuencial >= 999:
             user.secuencial = 1
         else:
@@ -189,6 +198,7 @@ def update_secuencial(user: User, year_input) -> int:
 
     db.session.commit()
     return user.secuencial
+
 
 def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
     """
@@ -221,12 +231,14 @@ def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
         db.session.commit()
         return year_seq.secuencial
 
+
 # ============================
 # RUTAS
 # ============================
 @app.route("/")
 def home():
     return "Bienvenido a la API de Vinder (SQLAlchemy Edition)"
+
 
 @app.route("/register", methods=["POST"])
 def register():
@@ -261,6 +273,7 @@ def register():
 
     return jsonify({"message": "Usuario registrado exitosamente."}), 201
 
+
 @app.route("/login", methods=["POST"])
 def login():
     data = request.json
@@ -278,6 +291,7 @@ def login():
         return jsonify({"message": "Login exitoso"}), 200
     else:
         return jsonify({"error": "Contraseña incorrecta"}), 401
+
 
 @app.route("/obtener_secuencial", methods=["POST"])
 def obtener_secuencial():
@@ -297,6 +311,7 @@ def obtener_secuencial():
     except Exception as e:
         logger.error(f"Error al obtener secuencial: {e}")
         return jsonify({"error": "Error al obtener el secuencial"}), 500
+
 
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
@@ -353,6 +368,7 @@ def stripe_webhook():
         logger.error(f"Error procesando el webhook: {e}")
         return jsonify({"error": "Error al procesar el webhook"}), 400
 
+
 @app.route("/create-checkout-session", methods=["POST"])
 def create_checkout_session():
     try:
@@ -404,13 +420,16 @@ def create_checkout_session():
         logger.error(f"Error al crear la sesión de pago: {e}")
         return jsonify({"error": str(e)}), 500
 
+
 @app.route("/success", methods=["GET"])
 def success():
     return "¡Pago exitoso! Gracias por tu compra."
 
+
 @app.route("/cancel", methods=["GET"])
 def cancel():
     return "El proceso de pago ha sido cancelado o ha fallado."
+
 
 @app.route("/funcion-principal", methods=["GET"])
 def funcion_principal():
@@ -419,6 +438,7 @@ def funcion_principal():
     if not license_is_active(user):
         return jsonify({"error": "Licencia expirada o usuario inexistente. Renueva para continuar."}), 403
     return jsonify({"message": "Acceso permitido a la función principal."})
+
 
 @app.route("/guardar_vin", methods=["POST"])
 def guardar_vin_endpoint():
@@ -447,6 +467,7 @@ def guardar_vin_endpoint():
         logger.error(f"Error al guardar VIN: {e}")
         return jsonify({"error": str(e)}), 500
 
+
 @app.route("/ver_vins", methods=["GET"])
 def ver_vins():
     user_name = request.args.get("user")
@@ -470,6 +491,7 @@ def ver_vins():
     except Exception as e:
         logger.error(f"Error al listar VINs: {e}")
         return jsonify({"error": str(e)}), 500
+
 
 # NUEVO ENDPOINT: Exportar VINs a Excel
 @app.route("/export_vins", methods=["GET"])
@@ -510,6 +532,7 @@ def export_vins():
         logger.error(f"Error al exportar VINs: {e}")
         return jsonify({"error": str(e)}), 500
 
+
 @app.route("/eliminar_todos_vins", methods=["POST"])
 def eliminar_todos_vins():
     data = request.json
@@ -534,6 +557,7 @@ def eliminar_todos_vins():
         db.session.rollback()
         logger.error(f"Error al eliminar todos los VINs: {e}")
         return jsonify({"error": str(e)}), 500
+
 
 @app.route("/eliminar_ultimo_vin", methods=["POST"])
 def eliminar_ultimo_vin():
@@ -561,7 +585,7 @@ def eliminar_ultimo_vin():
 
         year_seq = YearSequence.query.filter_by(user_id=user.id, year=year_int).first()
         if year_seq and year_seq.secuencial > 1:
-            # Decrementar el secuencial (puedes ajustar esta lógica según tus necesidades)
+            # Decrementar el secuencial
             year_seq.secuencial -= 1
             db.session.commit()
 
@@ -573,23 +597,46 @@ def eliminar_ultimo_vin():
         logger.error(f"Error al eliminar el último VIN: {e}")
         return jsonify({"error": str(e)}), 500
 
-# NUEVO ENDPOINT: Check for Updates
+
+# NUEVO ENDPOINT: Check for Updates con barra de progreso (SSE)
 @app.route("/check_updates", methods=["GET"])
 def check_updates():
     """
     Verifica si hay una nueva versión disponible usando 'tufup'.
-    Si la hay, se actualiza automáticamente y se retorna un mensaje.
+    Se configura la URL de repositorio para actualizaciones según la URL de GitHub Releases.
+    Si existe una nueva versión, se actualiza y se envía un flujo (SSE) con el progreso.
     """
-    try:
-        result = subprocess.run(["tufup", "check"], capture_output=True, text=True)
-        if "New version available" in result.stdout:
-            subprocess.run(["tufup", "update"])
-            return jsonify({"message": "Nueva versión disponible. Se ha actualizado la aplicación."}), 200
-        else:
-            return jsonify({"message": "No hay actualizaciones disponibles."}), 200
-    except Exception as e:
-        logger.error(f"Error al verificar actualizaciones: {e}")
-        return jsonify({"error": str(e)}), 500
+
+    def generate():
+        try:
+            yield "data: Configurando repositorio de actualizaciones...\n\n"
+            # Configurar el repositorio para tufup usando la URL de GitHub Releases
+            subprocess.run(
+                ["tufup", "configure", "--repo-url", "https://github.com/Saidpc18/Flask_stripe_server/releases/latest"],
+                check=True)
+            yield "data: Repositorio configurado.\n\n"
+
+            yield "data: Verificando actualizaciones...\n\n"
+            result = subprocess.run(["tufup", "check"], capture_output=True, text=True, check=True)
+            yield f"data: Resultado de verificación: {result.stdout}\n\n"
+
+            if "New version available" in result.stdout:
+                yield "data: Actualización disponible. Iniciando actualización...\n\n"
+                process = subprocess.Popen(["tufup", "update"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                           text=True)
+                # Leer la salida línea por línea y enviarla
+                for line in iter(process.stdout.readline, ""):
+                    yield f"data: {line.strip()}\n\n"
+                process.stdout.close()
+                process.wait()
+                yield "data: Actualización completada.\n\n"
+            else:
+                yield "data: No hay actualizaciones disponibles.\n\n"
+        except Exception as e:
+            yield f"data: Error durante la actualización: {e}\n\n"
+
+    return Response(generate(), mimetype="text/event-stream")
+
 
 if __name__ == "__main__":
     try:
