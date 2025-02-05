@@ -1,5 +1,6 @@
 import os
 import io
+import sys
 import logging
 from datetime import datetime, timedelta
 import subprocess
@@ -44,10 +45,7 @@ print(DB_CONFIG)
 app = Flask(__name__)
 
 # Configura DEBUG según la variable de entorno
-if os.getenv("FLASK_ENV") == "production":
-    app.config["DEBUG"] = False
-else:
-    app.config["DEBUG"] = True
+app.config["DEBUG"] = False if os.getenv("FLASK_ENV") == "production" else True
 
 # Construimos la URL de la BD
 default_db_url = (
@@ -169,6 +167,7 @@ def renew_license(user: User) -> bool:
 def update_secuencial(user: User, year_input) -> int:
     """
     Permite actualizar el secuencial del usuario según el año (o letra que representa el año).
+    Reinicia a 1 después de 100.
     """
     if not user:
         return 0
@@ -182,7 +181,11 @@ def update_secuencial(user: User, year_input) -> int:
         user.secuencial = 1
         user.last_year = year_int
     else:
-        user.secuencial = user.secuencial + 1 if user.secuencial < 999 else 1
+        # Reinicia a 1 después de 100
+        if user.secuencial >= 100:
+            user.secuencial = 1
+        else:
+            user.secuencial += 1
 
     db.session.commit()
     return user.secuencial
@@ -190,6 +193,7 @@ def update_secuencial(user: User, year_input) -> int:
 def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
     """
     Obtiene o incrementa el secuencial para un usuario dado y un año (letra o número).
+    Reinicia a 1 después de 100.
     """
     user = get_user_by_username(username)
     if not user:
@@ -209,7 +213,7 @@ def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
         db.session.commit()
         return 1
     else:
-        if year_seq.secuencial >= 999:
+        if year_seq.secuencial >= 100:
             year_seq.secuencial = 1
         else:
             year_seq.secuencial += 1
@@ -418,6 +422,7 @@ def funcion_principal():
 
 @app.route("/guardar_vin", methods=["POST"])
 def guardar_vin_endpoint():
+    # DEBUG: Mostrar información de la clase VIN
     print("DEBUG>>> VIN class:", VIN, type(VIN), VIN.__module__)
     print("DEBUG>>> VIN columns:", VIN.__table__.columns.keys())
 
@@ -517,8 +522,10 @@ def eliminar_todos_vins():
         return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
 
     try:
+        # Eliminar todos los VINs del usuario
         VIN.query.filter_by(user_id=user.id).delete()
         db.session.commit()
+        # Reiniciar secuencial eliminando las entradas en YearSequence para este usuario
         YearSequence.query.filter_by(user_id=user.id).delete()
         db.session.commit()
 
@@ -554,6 +561,7 @@ def eliminar_ultimo_vin():
 
         year_seq = YearSequence.query.filter_by(user_id=user.id, year=year_int).first()
         if year_seq and year_seq.secuencial > 1:
+            # Decrementar el secuencial (puedes ajustar esta lógica según tus necesidades)
             year_seq.secuencial -= 1
             db.session.commit()
 
