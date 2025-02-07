@@ -30,6 +30,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # ============================
 # FUNCIONES PARA ICONO Y ACTUALIZACIONES
 # ============================
@@ -44,6 +45,7 @@ def set_icon(window, logo_small=None):
             window.iconbitmap(icon_path)
     except Exception as e:
         print("No se pudo configurar el icono:", e)
+
 
 def check_for_updates():
     """
@@ -92,6 +94,7 @@ def check_for_updates():
             messagebox.showerror("Error", f"Error durante la actualización: {e}")
 
     threading.Thread(target=run_update).start()
+
 
 # ============================
 # CATÁLOGOS (LOCALES)
@@ -171,6 +174,7 @@ posicion_10 = {
 posicion_11 = {
     "Ex Hacienda la Honda, Zacatecas, México": "A"
 }
+
 
 # ============================
 # CLASE DE LA APLICACIÓN GUI
@@ -379,13 +383,17 @@ class VinderApp:
         self.limpiar_main_frame()
         container = tb.Frame(self.main_frame, padding=40)
         container.pack(expand=True)
+
         if self.logo_photo_large is not None:
             logo_label = tb.Label(container, image=self.logo_photo_large)
             logo_label.pack(pady=10)
+
         lbl = tb.Label(container, text="Bienvenido a Vinder", font=("Helvetica", 22, "bold"))
         lbl.pack(pady=20)
+
         btn_crear = tb.Button(container, text="Crear Cuenta", bootstyle=PRIMARY, command=self.ventana_crear_cuenta)
         btn_crear.pack(pady=10, ipadx=10)
+
         btn_login = tb.Button(container, text="Iniciar Sesión", bootstyle=INFO, command=self.ventana_iniciar_sesion)
         btn_login.pack(pady=10, ipadx=10)
 
@@ -393,15 +401,19 @@ class VinderApp:
         self.limpiar_main_frame()
         container = tb.Frame(self.main_frame, padding=40)
         container.pack(expand=True)
+
         if self.logo_photo_large is not None:
             logo_label = tb.Label(container, image=self.logo_photo_large)
             logo_label.pack(pady=10)
+
         lbl_title = tb.Label(container, text="Crear Cuenta", font=("Helvetica", 20, "bold"))
         lbl_title.pack(pady=10)
+
         lbl_user = tb.Label(container, text="Usuario:", font=("Helvetica", 14))
         lbl_user.pack(pady=5)
         entry_reg_user = tb.Entry(container, font=("Helvetica", 14), width=25)
         entry_reg_user.pack()
+
         lbl_pass = tb.Label(container, text="Contraseña:", font=("Helvetica", 14))
         lbl_pass.pack(pady=5)
         entry_reg_pass = tb.Entry(container, show="*", font=("Helvetica", 14), width=25)
@@ -425,8 +437,10 @@ class VinderApp:
                     messagebox.showerror("Error", f"Registro fallido: {err}")
             except requests.RequestException as e:
                 messagebox.showerror("Error", f"Error al conectarse con el servidor: {e}")
+
         btn_reg = tb.Button(container, text="Registrar", bootstyle=SUCCESS, command=do_register)
         btn_reg.pack(pady=10, ipadx=10)
+
         btn_volver = tb.Button(container, text="Volver", bootstyle=SECONDARY, command=self.mostrar_ventana_inicio)
         btn_volver.pack(pady=5, ipadx=10)
 
@@ -434,15 +448,19 @@ class VinderApp:
         self.limpiar_main_frame()
         container = tb.Frame(self.main_frame, padding=40)
         container.pack(expand=True)
+
         if self.logo_photo_large is not None:
             logo_label = tb.Label(container, image=self.logo_photo_large)
             logo_label.pack(pady=10)
+
         lbl_title = tb.Label(container, text="Iniciar Sesión", font=("Helvetica", 20, "bold"))
         lbl_title.pack(pady=10)
+
         lbl_user = tb.Label(container, text="Usuario:", font=("Helvetica", 14))
         lbl_user.pack(pady=5)
         entry_user = tb.Entry(container, font=("Helvetica", 14), width=25)
         entry_user.pack()
+
         lbl_pass = tb.Label(container, text="Contraseña:", font=("Helvetica", 14))
         lbl_pass.pack(pady=5)
         entry_pass = tb.Entry(container, show="*", font=("Helvetica", 14), width=25)
@@ -467,8 +485,10 @@ class VinderApp:
                     messagebox.showerror("Error", f"Login fallido: {err}")
             except requests.RequestException as e:
                 messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
+
         btn_login = tb.Button(container, text="Iniciar Sesión", bootstyle=PRIMARY, command=do_login)
         btn_login.pack(pady=10, ipadx=10)
+
         btn_volver = tb.Button(container, text="Volver", bootstyle=SECONDARY, command=self.mostrar_ventana_inicio)
         btn_volver.pack(pady=5, ipadx=10)
 
@@ -476,17 +496,24 @@ class VinderApp:
         self.limpiar_main_frame()
         self.left_frame = tb.Frame(self.main_frame, padding=20)
         self.left_frame.pack(side="left", fill="both", expand=True)
+
         self.right_frame = tb.Frame(self.main_frame, padding=20)
         self.right_frame.pack(side="right", fill="both", expand=True)
+
         lbl_title = tb.Label(self.main_frame, text=f"Hola, {self.usuario_actual}", font=("Helvetica", 16, "bold"))
         lbl_title.pack(pady=10)
+
         tb.Label(self.left_frame, text="Generar VIN", font=("Helvetica", 14, "underline")).pack(pady=5)
         tb.Label(self.left_frame, text="Código WMI:", font=("Helvetica", 12)).pack()
         tb.Entry(self.left_frame, textvariable=self.var_wmi, font=("Helvetica", 12), width=10).pack()
+
         self.crear_optionmenus(self.left_frame)
+
         tb.Button(self.right_frame, text="Generar VIN", bootstyle=PRIMARY, command=self.generar_vin).pack(pady=10, ipadx=5)
+
         self.result_label = tb.Label(self.right_frame, text="VIN/NIV: ", font=("Helvetica", 12))
         self.result_label.pack(pady=5)
+
         tb.Button(self.right_frame, text="Renovar Licencia", bootstyle=SUCCESS, command=self.iniciar_pago).pack(pady=10, ipadx=5)
         tb.Button(self.right_frame, text="Ver VINs Generados", bootstyle=INFO, command=self.ventana_lista_vins).pack(pady=5, ipadx=5)
         tb.Button(self.right_frame, text="Exportar VINs a Excel", bootstyle=INFO, command=self.exportar_vins).pack(pady=5, ipadx=5)
@@ -498,34 +525,44 @@ class VinderApp:
     def crear_optionmenus(self, parent):
         def valor_inicial(dic):
             return list(dic.keys())[0] if dic else ""
+
         tb.Label(parent, text="Pos.4 (Modelo):", font=("Helvetica", 12)).pack()
         self.menu_c4 = tb.OptionMenu(parent, self.var_c4, valor_inicial(posicion_4), *posicion_4.keys())
         self.menu_c4.pack()
+
         tb.Label(parent, text="Pos.5:", font=("Helvetica", 12)).pack()
         self.menu_c5 = tb.OptionMenu(parent, self.var_c5, valor_inicial(posicion_5), *posicion_5.keys())
         self.menu_c5.pack()
+
         tb.Label(parent, text="Pos.6:", font=("Helvetica", 12)).pack()
         self.menu_c6 = tb.OptionMenu(parent, self.var_c6, valor_inicial(posicion_6), *posicion_6.keys())
         self.menu_c6.pack()
+
         tb.Label(parent, text="Pos.7:", font=("Helvetica", 12)).pack()
         self.menu_c7 = tb.OptionMenu(parent, self.var_c7, valor_inicial(posicion_7), *posicion_7.keys())
         self.menu_c7.pack()
+
         tb.Label(parent, text="Pos.8:", font=("Helvetica", 12)).pack()
         self.menu_c8 = tb.OptionMenu(parent, self.var_c8, valor_inicial(posicion_8), *posicion_8.keys())
         self.menu_c8.pack()
+
         tb.Label(parent, text="Pos.10 (Año):", font=("Helvetica", 12)).pack()
         self.menu_c10 = tb.OptionMenu(parent, self.var_c10, valor_inicial(posicion_10), *posicion_10.keys())
         self.menu_c10.pack()
+
         tb.Label(parent, text="Pos.11 (Planta):", font=("Helvetica", 12)).pack()
         self.menu_c11 = tb.OptionMenu(parent, self.var_c11, valor_inicial(posicion_11), *posicion_11.keys())
         self.menu_c11.pack()
 
     def generar_vin(self):
+        # Verificamos suscripción/licencia
         if not self.verificar_licencia():
             return
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
+
+        # Obtenemos los valores elegidos
         wmi = self.var_wmi.get().strip().upper()
         c4 = posicion_4.get(self.var_c4.get(), "")
         c5 = posicion_5.get(self.var_c5.get(), "")
@@ -534,17 +571,29 @@ class VinderApp:
         c8 = posicion_8.get(self.var_c8.get(), "")
         c10 = posicion_10.get(self.var_c10.get(), "")
         c11 = posicion_11.get(self.var_c11.get(), "")
+
         if not (wmi and c4 and c5 and c6 and c7 and c8 and c10 and c11):
             messagebox.showerror("Error", "Faltan datos en uno de los catálogos.")
             return
+
+        # Obtenemos un secuencial desde el servidor
         sec = self.obtener_secuencial_desde_servidor(c10)
         if sec == 0:
             return
+
         sec_str = str(sec).zfill(3)
         fixed_12_14 = "098"
+
+        # Se arma el VIN sin la posición 9 para poder calcular el dígito verificador
         valores_sin_pos9 = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{fixed_12_14}{sec_str}"
+
+        # Calculamos la posición 9 con la función que multiplica por pesos
         pos9 = self.calcular_posicion_9(valores_sin_pos9)
+
+        # Formamos el VIN final
         vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{pos9}{c10}{c11}{fixed_12_14}{sec_str}"
+
+        # Guardamos en el servidor
         vin_data = {
             "wmi": wmi,
             "c4": c4,
@@ -560,6 +609,8 @@ class VinderApp:
             "vin_completo": vin_completo,
         }
         self.guardar_vin_en_flask(vin_data)
+
+        # Mostramos en la interfaz
         if self.result_label:
             self.result_label.config(text=f"VIN/NIV: {vin_completo}", font=("Helvetica", 24, "bold"))
         else:
@@ -603,10 +654,10 @@ class VinderApp:
         linea2 = "    ".join(mapping[mitad:])
 
         conversion_details = (
-                "Detalle de la conversión:\n"
-                + linea1 + "\n"
-                + linea2 + "\n"
-                + f"Suma total ponderada: {suma}\n"
+            "Detalle de la conversión:\n"
+            + linea1 + "\n"
+            + linea2 + "\n"
+            + f"Suma total ponderada: {suma}\n"
         )
 
         # Cálculo de dígito verificador (módulo 11)
@@ -641,6 +692,7 @@ class VinderApp:
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
+
         vins = self.ver_vins_en_flask()
         vins_window = tb.Toplevel(self.master)
         vins_window.title("VINs Generados")
@@ -655,14 +707,17 @@ class VinderApp:
             vin_completo = vin.get("vin_completo", "VIN no disponible")
             fecha_crea = vin.get("created_at", "")
             texto_vins += f"VIN Completo: {vin_completo}\nCreado: {fecha_crea}\n" + ("-" * 40 + "\n")
+
         st.insert("end", texto_vins)
         st.configure(state="disabled")
 
         btn_frame = tb.Frame(vins_window)
         btn_frame.pack(fill="x", pady=5)
+
         btn_eliminar_todos = tb.Button(btn_frame, text="Eliminar TODOS los VINs", bootstyle=DANGER,
                                        command=self.eliminar_todos_vins)
         btn_eliminar_todos.pack(side="left", padx=5)
+
         btn_eliminar_ultimo = tb.Button(btn_frame, text="Eliminar ÚLTIMO VIN", bootstyle=DANGER,
                                         command=self.eliminar_ultimo_vin)
         btn_eliminar_ultimo.pack(side="left", padx=5)
@@ -671,278 +726,6 @@ class VinderApp:
         self.usuario_actual = None
         self.mostrar_ventana_inicio()
 
-    # ----------------------------
-    # MÉTODOS DE GESTIÓN DE VENTANAS
-    # ----------------------------
-    def limpiar_main_frame(self):
-        for w in self.main_frame.winfo_children():
-            w.destroy()
-
-    def mostrar_ventana_inicio(self):
-        self.limpiar_main_frame()
-        container = tb.Frame(self.main_frame, padding=40)
-        container.pack(expand=True)
-        if self.logo_photo_large is not None:
-            logo_label = tb.Label(container, image=self.logo_photo_large)
-            logo_label.pack(pady=10)
-        lbl = tb.Label(container, text="Bienvenido a Vinder", font=("Helvetica", 22, "bold"))
-        lbl.pack(pady=20)
-        btn_crear = tb.Button(container, text="Crear Cuenta", bootstyle=PRIMARY, command=self.ventana_crear_cuenta)
-        btn_crear.pack(pady=10, ipadx=10)
-        btn_login = tb.Button(container, text="Iniciar Sesión", bootstyle=INFO, command=self.ventana_iniciar_sesion)
-        btn_login.pack(pady=10, ipadx=10)
-
-    def ventana_crear_cuenta(self):
-        self.limpiar_main_frame()
-        container = tb.Frame(self.main_frame, padding=40)
-        container.pack(expand=True)
-        if self.logo_photo_large is not None:
-            logo_label = tb.Label(container, image=self.logo_photo_large)
-            logo_label.pack(pady=10)
-        lbl_title = tb.Label(container, text="Crear Cuenta", font=("Helvetica", 20, "bold"))
-        lbl_title.pack(pady=10)
-        lbl_user = tb.Label(container, text="Usuario:", font=("Helvetica", 14))
-        lbl_user.pack(pady=5)
-        entry_reg_user = tb.Entry(container, font=("Helvetica", 14), width=25)
-        entry_reg_user.pack()
-        lbl_pass = tb.Label(container, text="Contraseña:", font=("Helvetica", 14))
-        lbl_pass.pack(pady=5)
-        entry_reg_pass = tb.Entry(container, show="*", font=("Helvetica", 14), width=25)
-        entry_reg_pass.pack()
-
-        def do_register():
-            username = entry_reg_user.get().strip()
-            password = entry_reg_pass.get().strip()
-            if not username or not password:
-                messagebox.showerror("Error", "Completa todos los campos.")
-                return
-            register_url = "https://flask-stripe-server.onrender.com/register"
-            try:
-                response = requests.post(register_url, json={"username": username, "password": password})
-                if response.status_code == 201:
-                    messagebox.showinfo("Éxito", "Cuenta creada exitosamente. Ahora puedes iniciar sesión.")
-                    self.mostrar_ventana_inicio()
-                else:
-                    data = response.json()
-                    err = data.get("error", "Error desconocido")
-                    messagebox.showerror("Error", f"Registro fallido: {err}")
-            except requests.RequestException as e:
-                messagebox.showerror("Error", f"Error al conectarse con el servidor: {e}")
-        btn_reg = tb.Button(container, text="Registrar", bootstyle=SUCCESS, command=do_register)
-        btn_reg.pack(pady=10, ipadx=10)
-        btn_volver = tb.Button(container, text="Volver", bootstyle=SECONDARY, command=self.mostrar_ventana_inicio)
-        btn_volver.pack(pady=5, ipadx=10)
-
-    def ventana_iniciar_sesion(self):
-        self.limpiar_main_frame()
-        container = tb.Frame(self.main_frame, padding=40)
-        container.pack(expand=True)
-        if self.logo_photo_large is not None:
-            logo_label = tb.Label(container, image=self.logo_photo_large)
-            logo_label.pack(pady=10)
-        lbl_title = tb.Label(container, text="Iniciar Sesión", font=("Helvetica", 20, "bold"))
-        lbl_title.pack(pady=10)
-        lbl_user = tb.Label(container, text="Usuario:", font=("Helvetica", 14))
-        lbl_user.pack(pady=5)
-        entry_user = tb.Entry(container, font=("Helvetica", 14), width=25)
-        entry_user.pack()
-        lbl_pass = tb.Label(container, text="Contraseña:", font=("Helvetica", 14))
-        lbl_pass.pack(pady=5)
-        entry_pass = tb.Entry(container, show="*", font=("Helvetica", 14), width=25)
-        entry_pass.pack()
-
-        def do_login():
-            user = entry_user.get().strip()
-            pw = entry_pass.get().strip()
-            if not user or not pw:
-                messagebox.showerror("Error", "Completa todos los campos.")
-                return
-            login_url = "https://flask-stripe-server.onrender.com/login"
-            try:
-                response = requests.post(login_url, json={"username": user, "password": pw})
-                if response.status_code == 200:
-                    messagebox.showinfo("Éxito", f"Bienvenido, {user}")
-                    self.usuario_actual = user
-                    self.ventana_principal()
-                else:
-                    data = response.json()
-                    err = data.get("error", "Error desconocido")
-                    messagebox.showerror("Error", f"Login fallido: {err}")
-            except requests.RequestException as e:
-                messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
-        btn_login = tb.Button(container, text="Iniciar Sesión", bootstyle=PRIMARY, command=do_login)
-        btn_login.pack(pady=10, ipadx=10)
-        btn_volver = tb.Button(container, text="Volver", bootstyle=SECONDARY, command=self.mostrar_ventana_inicio)
-        btn_volver.pack(pady=5, ipadx=10)
-
-    def ventana_principal(self):
-        self.limpiar_main_frame()
-        self.left_frame = tb.Frame(self.main_frame, padding=20)
-        self.left_frame.pack(side="left", fill="both", expand=True)
-        self.right_frame = tb.Frame(self.main_frame, padding=20)
-        self.right_frame.pack(side="right", fill="both", expand=True)
-        lbl_title = tb.Label(self.main_frame, text=f"Hola, {self.usuario_actual}", font=("Helvetica", 16, "bold"))
-        lbl_title.pack(pady=10)
-        tb.Label(self.left_frame, text="Generar VIN", font=("Helvetica", 14, "underline")).pack(pady=5)
-        tb.Label(self.left_frame, text="Código WMI:", font=("Helvetica", 12)).pack()
-        tb.Entry(self.left_frame, textvariable=self.var_wmi, font=("Helvetica", 12), width=10).pack()
-        self.crear_optionmenus(self.left_frame)
-        tb.Button(self.right_frame, text="Generar VIN", bootstyle=PRIMARY, command=self.generar_vin).pack(pady=10, ipadx=5)
-        self.result_label = tb.Label(self.right_frame, text="VIN/NIV: ", font=("Helvetica", 12))
-        self.result_label.pack(pady=5)
-        tb.Button(self.right_frame, text="Renovar Licencia", bootstyle=SUCCESS, command=self.iniciar_pago).pack(pady=10, ipadx=5)
-        tb.Button(self.right_frame, text="Ver VINs Generados", bootstyle=INFO, command=self.ventana_lista_vins).pack(pady=5, ipadx=5)
-        tb.Button(self.right_frame, text="Exportar VINs a Excel", bootstyle=INFO, command=self.exportar_vins).pack(pady=5, ipadx=5)
-        tb.Button(self.right_frame, text="Eliminar TODOS los VINs", bootstyle=WARNING, command=self.eliminar_todos_vins).pack(pady=5, ipadx=5)
-        tb.Button(self.right_frame, text="Eliminar ÚLTIMO VIN", bootstyle=WARNING, command=self.eliminar_ultimo_vin).pack(pady=5, ipadx=5)
-        tb.Button(self.right_frame, text="Buscar actualizaciones", bootstyle=SECONDARY, command=check_for_updates).pack(pady=10, ipadx=5)
-        tb.Button(self.right_frame, text="Cerrar Sesión", bootstyle=DANGER, command=self.cerrar_sesion).pack(pady=10, ipadx=5)
-
-    def crear_optionmenus(self, parent):
-        def valor_inicial(dic):
-            return list(dic.keys())[0] if dic else ""
-        tb.Label(parent, text="Pos.4 (Modelo):", font=("Helvetica", 12)).pack()
-        self.menu_c4 = tb.OptionMenu(parent, self.var_c4, valor_inicial(posicion_4), *posicion_4.keys())
-        self.menu_c4.pack()
-        tb.Label(parent, text="Pos.5:", font=("Helvetica", 12)).pack()
-        self.menu_c5 = tb.OptionMenu(parent, self.var_c5, valor_inicial(posicion_5), *posicion_5.keys())
-        self.menu_c5.pack()
-        tb.Label(parent, text="Pos.6:", font=("Helvetica", 12)).pack()
-        self.menu_c6 = tb.OptionMenu(parent, self.var_c6, valor_inicial(posicion_6), *posicion_6.keys())
-        self.menu_c6.pack()
-        tb.Label(parent, text="Pos.7:", font=("Helvetica", 12)).pack()
-        self.menu_c7 = tb.OptionMenu(parent, self.var_c7, valor_inicial(posicion_7), *posicion_7.keys())
-        self.menu_c7.pack()
-        tb.Label(parent, text="Pos.8:", font=("Helvetica", 12)).pack()
-        self.menu_c8 = tb.OptionMenu(parent, self.var_c8, valor_inicial(posicion_8), *posicion_8.keys())
-        self.menu_c8.pack()
-        tb.Label(parent, text="Pos.10 (Año):", font=("Helvetica", 12)).pack()
-        self.menu_c10 = tb.OptionMenu(parent, self.var_c10, valor_inicial(posicion_10), *posicion_10.keys())
-        self.menu_c10.pack()
-        tb.Label(parent, text="Pos.11 (Planta):", font=("Helvetica", 12)).pack()
-        self.menu_c11 = tb.OptionMenu(parent, self.var_c11, valor_inicial(posicion_11), *posicion_11.keys())
-        self.menu_c11.pack()
-
-    def generar_vin(self):
-        if not self.verificar_licencia():
-            return
-        if not self.usuario_actual:
-            messagebox.showerror("Error", "No hay usuario activo.")
-            return
-        wmi = self.var_wmi.get().strip().upper()
-        c4 = posicion_4.get(self.var_c4.get(), "")
-        c5 = posicion_5.get(self.var_c5.get(), "")
-        c6 = posicion_6.get(self.var_c6.get(), "")
-        c7 = posicion_7.get(self.var_c7.get(), "")
-        c8 = posicion_8.get(self.var_c8.get(), "")
-        c10 = posicion_10.get(self.var_c10.get(), "")
-        c11 = posicion_11.get(self.var_c11.get(), "")
-        if not (wmi and c4 and c5 and c6 and c7 and c8 and c10 and c11):
-            messagebox.showerror("Error", "Faltan datos en uno de los catálogos.")
-            return
-        sec = self.obtener_secuencial_desde_servidor(c10)
-        if sec == 0:
-            return
-        sec_str = str(sec).zfill(3)
-        fixed_12_14 = "098"
-        valores_sin_pos9 = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{fixed_12_14}{sec_str}"
-        pos9 = self.calcular_posicion_9(valores_sin_pos9)
-        vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{pos9}{c10}{c11}{fixed_12_14}{sec_str}"
-        vin_data = {
-            "wmi": wmi,
-            "c4": c4,
-            "c5": c5,
-            "c6": c6,
-            "c7": c7,
-            "c8": c8,
-            "c10": c10,
-            "c11": c11,
-            "pos9": pos9,
-            "fixed_12_14": fixed_12_14,
-            "secuencial": sec_str,
-            "vin_completo": vin_completo,
-        }
-        self.guardar_vin_en_flask(vin_data)
-        if self.result_label:
-            self.result_label.config(text=f"VIN/NIV: {vin_completo}", font=("Helvetica", 24, "bold"))
-        else:
-            self.result_label = tb.Label(self.right_frame, text=f"VIN/NIV: {vin_completo}", font=("Helvetica", 24, "bold"))
-            self.result_label.pack(pady=5)
-
-    def calcular_posicion_9(self, valores):
-        """
-        Calcula el dígito verificador (posición 9) del VIN.
-        Además, muestra en una barra de estado el detalle de la conversión.
-        """
-        sustituciones = {
-            "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
-            "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9, "S": 2,
-            "T": 3, "U": 4, "V": 5, "W": 6, "X": 7, "Y": 8, "Z": 9,
-        }
-        for i in range(10):
-            sustituciones[str(i)] = i
-
-        mapping = []
-        suma = 0
-        for char in valores:
-            valor_num = sustituciones.get(char, 0)
-            mapping.append(f"'{char}'→{valor_num}")
-            suma += valor_num
-
-        mitad = len(mapping) // 2
-        linea1 = "    ".join(mapping[:mitad])
-        linea2 = "    ".join(mapping[mitad:])
-        conversion_details = "Detalle de la conversión:\n" + linea1 + "\n" + linea2 + "\n"
-        conversion_details += f"Suma total: {suma}\n"
-        resultado_modulo = suma % 11
-        conversion_details += f"Módulo 11: {resultado_modulo}\n"
-        digito_verificador = "X" if resultado_modulo == 10 else str(resultado_modulo)
-        conversion_details += f"Dígito verificador: {digito_verificador}"
-
-        if self.status_label:
-            self.status_label.config(text=conversion_details)
-        else:
-            self.status_label = tb.Label(self.master, text=conversion_details, font=("Helvetica", 10),
-                                         bootstyle="secondary", anchor="center", justify="center", wraplength=600)
-            self.status_label.pack(side="bottom", fill="x", pady=5)
-        return digito_verificador
-
-    def ventana_lista_vins(self):
-        """Muestra la lista de VINs generados en una ventana secundaria (Toplevel)."""
-        if not self.verificar_licencia():
-            return
-        if not self.usuario_actual:
-            messagebox.showerror("Error", "No hay usuario activo.")
-            return
-        vins = self.ver_vins_en_flask()
-        vins_window = tb.Toplevel(self.master)
-        vins_window.title("VINs Generados")
-        set_icon(vins_window, self.logo_photo_small)
-        vins_window.geometry("500x400")
-
-        st = ScrolledText(vins_window, wrap="none", font=("Helvetica", 12, "bold"), height=20)
-        st.pack(fill="both", expand=True)
-
-        texto_vins = ""
-        for vin in vins:
-            vin_completo = vin.get("vin_completo", "VIN no disponible")
-            fecha_crea = vin.get("created_at", "")
-            texto_vins += f"VIN Completo: {vin_completo}\nCreado: {fecha_crea}\n" + ("-" * 40 + "\n")
-        st.insert("end", texto_vins)
-        st.configure(state="disabled")
-
-        btn_frame = tb.Frame(vins_window)
-        btn_frame.pack(fill="x", pady=5)
-        btn_eliminar_todos = tb.Button(btn_frame, text="Eliminar TODOS los VINs", bootstyle=DANGER,
-                                       command=self.eliminar_todos_vins)
-        btn_eliminar_todos.pack(side="left", padx=5)
-        btn_eliminar_ultimo = tb.Button(btn_frame, text="Eliminar ÚLTIMO VIN", bootstyle=DANGER,
-                                        command=self.eliminar_ultimo_vin)
-        btn_eliminar_ultimo.pack(side="left", padx=5)
-
-    def cerrar_sesion(self):
-        self.usuario_actual = None
-        self.mostrar_ventana_inicio()
 
 # ----------------------------
 # EJECUCIÓN DEL PROGRAMA
