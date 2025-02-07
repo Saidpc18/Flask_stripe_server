@@ -568,40 +568,70 @@ class VinderApp:
 
     def calcular_posicion_9(self, valores):
         """
-        Calcula el dígito verificador (posición 9) del VIN.
+        Calcula el dígito verificador (posición 9) del VIN,
+        aplicando los pesos (8,7,6,5,4,3,2,10,9,8,7,6,5,4,3,2) a cada carácter convertido.
         Además, muestra en una barra de estado el detalle de la conversión.
         """
+
+        # Diccionario de sustituciones de caracteres a valores numéricos
         sustituciones = {
             "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
             "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9, "S": 2,
-            "T": 3, "U": 4, "V": 5, "W": 6, "X": 7, "Y": 8, "Z": 9,
+            "T": 3, "U": 4, "V": 5, "W": 6, "X": 7, "Y": 8, "Z": 9
         }
+        # Agregamos también las sustituciones para dígitos
         for i in range(10):
             sustituciones[str(i)] = i
 
+        # Pesos para cada posición del VIN (excepto que la 9na se revisa como check digit)
+        weights = [8, 7, 6, 5, 4, 3, 2, 10, 9, 8, 7, 6, 5, 4, 3, 2]
+
         mapping = []
         suma = 0
-        for char in valores:
-            valor_num = sustituciones.get(char, 0)
-            mapping.append(f"'{char}'→{valor_num}")
-            suma += valor_num
 
+        # Convertimos cada carácter y lo multiplicamos por su peso
+        for i, char in enumerate(valores):
+            valor_num = sustituciones.get(char, 0)
+            peso = weights[i]  # tomamos el peso según la posición
+            valor_ponderado = valor_num * peso
+            mapping.append(f"'{char}'→{valor_num} * {peso} = {valor_ponderado}")
+            suma += valor_ponderado
+
+        # Mostramos el detalle de la conversión en dos líneas para mayor legibilidad
         mitad = len(mapping) // 2
         linea1 = "    ".join(mapping[:mitad])
         linea2 = "    ".join(mapping[mitad:])
-        conversion_details = "Detalle de la conversión:\n" + linea1 + "\n" + linea2 + "\n"
-        conversion_details += f"Suma total: {suma}\n"
+
+        conversion_details = (
+                "Detalle de la conversión:\n"
+                + linea1 + "\n"
+                + linea2 + "\n"
+                + f"Suma total ponderada: {suma}\n"
+        )
+
+        # Cálculo de dígito verificador (módulo 11)
         resultado_modulo = suma % 11
         conversion_details += f"Módulo 11: {resultado_modulo}\n"
+
+        # Asignación del dígito verificador (10 se representa como 'X')
         digito_verificador = "X" if resultado_modulo == 10 else str(resultado_modulo)
         conversion_details += f"Dígito verificador: {digito_verificador}"
 
+        # Mostrar el resultado en la barra de estado o crearlo si no existe
         if self.status_label:
             self.status_label.config(text=conversion_details)
         else:
-            self.status_label = tb.Label(self.master, text=conversion_details, font=("Helvetica", 10),
-                                         bootstyle="secondary", anchor="center", justify="center", wraplength=600)
+            self.status_label = tb.Label(
+                self.master,
+                text=conversion_details,
+                font=("Helvetica", 10),
+                bootstyle="secondary",
+                anchor="center",
+                justify="center",
+                wraplength=600
+            )
             self.status_label.pack(side="bottom", fill="x", pady=5)
+
         return digito_verificador
 
     def ventana_lista_vins(self):
