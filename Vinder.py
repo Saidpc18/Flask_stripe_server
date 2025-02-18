@@ -297,9 +297,7 @@ class VinderApp:
             if resp.status_code == 200:
                 data = resp.json()
                 sec = data.get("secuencial", 0)
-                # Reinicia a 1 si el secuencial es mayor que 100
-                if sec > 100:
-                    sec = ((sec - 1) % 100) + 1
+                # Utiliza el secuencial tal como lo devuelve el servidor
                 return sec
             else:
                 err = resp.json().get("error", "Error desconocido")
