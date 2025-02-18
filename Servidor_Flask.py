@@ -602,39 +602,30 @@ def eliminar_ultimo_vin():
 @app.route("/check_updates", methods=["GET"])
 def check_updates():
     """
-    Verifica si hay una nueva versión disponible usando 'tufup'.
-    Se configura la URL de repositorio para actualizaciones según la URL de GitHub Releases.
-    Si existe una nueva versión, se actualiza y se envía un flujo (SSE) con el progreso.
+    Verifica si hay una nueva versión disponible usando 'tufup' 0.9.0.
+    Como Tufup 0.9.0 no soporta el comando 'update', este endpoint
+    se limita a inicializar la configuración y a listar los targets.
+    Si se detecta que hay "New version available" en la salida, se notifica
+    al usuario que debe descargar la nueva versión manualmente.
     """
-
     def generate():
         try:
             yield "data: Configurando repositorio de actualizaciones...\n\n"
-            # Configurar el repositorio para tufup usando la URL de GitHub Releases
-            subprocess.run(
-                ["tufup", "init", "--repo-url", "https://github.com/Saidpc18/Flask_stripe_server/releases/latest"],
-                check=True)
+            # Inicializa la configuración (se asume que existe un archivo de configuración adecuado)
+            subprocess.run(["tufup", "init"], check=True)
             yield "data: Repositorio configurado.\n\n"
 
             yield "data: Verificando actualizaciones...\n\n"
-            result = subprocess.run(["tufup", "check"], capture_output=True, text=True, check=True)
-            yield f"data: Resultado de verificación: {result.stdout}\n\n"
+            result = subprocess.run(["tufup", "targets"], capture_output=True, text=True, check=True)
+            stdout = result.stdout
+            yield f"data: Resultado de verificación: {stdout}\n\n"
 
-            if "New version available" in result.stdout:
-                yield "data: Actualización disponible. Iniciando actualización...\n\n"
-                process = subprocess.Popen(["tufup", "update"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                           text=True)
-                # Leer la salida línea por línea y enviarla
-                for line in iter(process.stdout.readline, ""):
-                    yield f"data: {line.strip()}\n\n"
-                process.stdout.close()
-                process.wait()
-                yield "data: Actualización completada.\n\n"
+            if "New version available" in stdout:
+                yield "data: Actualización disponible. Descarga la nueva versión desde la release.\n\n"
             else:
                 yield "data: No hay actualizaciones disponibles.\n\n"
         except Exception as e:
-            yield f"data: Error durante la actualización: {e}\n\n"
-
+            yield f"data: Error durante la verificación de actualizaciones: {e}\n\n"
     return Response(generate(), mimetype="text/event-stream")
 
 
