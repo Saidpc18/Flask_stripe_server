@@ -612,7 +612,7 @@ def check_updates():
             yield "data: Configurando repositorio de actualizaciones...\n\n"
             # Configurar el repositorio para tufup usando la URL de GitHub Releases
             subprocess.run(
-                ["tufup", "configure", "--repo-url", "https://github.com/Saidpc18/Flask_stripe_server/releases/latest"],
+                ["tufup", "init", "--repo-url", "https://github.com/Saidpc18/Flask_stripe_server/releases/latest"],
                 check=True)
             yield "data: Repositorio configurado.\n\n"
 
