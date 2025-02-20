@@ -75,11 +75,9 @@ if not webhook_secret:
     logger.error("El secreto del webhook no está configurado.")
     raise ValueError("Stripe Webhook Secret es obligatorio.")
 
-
 class StripeEventSchema(Schema):
     type = fields.String(required=True)
     data = fields.Dict(required=True)
-
 
 # ============================
 # DICCIONARIO DE LETRAS → AÑO
@@ -92,7 +90,6 @@ YEAR_MAP = {
     "W": 2028,
     "P": 2029,
 }
-
 
 # ============================
 # MODELOS SQLALCHEMY
@@ -113,7 +110,6 @@ class User(db.Model):
     def __repr__(self):
         return f"<User {self.username}>"
 
-
 class VIN(db.Model):
     __tablename__ = 'VIN'
     id = db.Column(db.Integer, primary_key=True)
@@ -123,7 +119,6 @@ class VIN(db.Model):
 
     def __repr__(self):
         return f"<VIN {self.vin_completo}>"
-
 
 class Subscription(db.Model):
     __tablename__ = 'subscriptions'
@@ -138,7 +133,6 @@ class Subscription(db.Model):
     def __repr__(self):
         return f"<Subscription {self.subscription_id} - {self.status}>"
 
-
 class YearSequence(db.Model):
     __tablename__ = 'year_sequences'
 
@@ -152,19 +146,16 @@ class YearSequence(db.Model):
     def __repr__(self):
         return f"<YearSequence user_id={self.user_id}, year={self.year}, secuencial={self.secuencial}>"
 
-
 # ============================
 # FUNCIONES AUXILIARES / LÓGICA DE NEGOCIO
 # ============================
 def get_user_by_username(username):
     return User.query.filter_by(username=username).first()
 
-
 def license_is_active(user: User) -> bool:
     if not user or not user.license_expiration:
         return False
     return user.license_expiration > datetime.now()
-
 
 def renew_license(user: User) -> bool:
     if not user:
@@ -172,7 +163,6 @@ def renew_license(user: User) -> bool:
     user.license_expiration = datetime.now() + timedelta(days=365)
     db.session.commit()
     return True
-
 
 def update_secuencial(user: User, year_input) -> int:
     """
@@ -199,11 +189,10 @@ def update_secuencial(user: User, year_input) -> int:
     db.session.commit()
     return user.secuencial
 
-
 def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
     """
     Obtiene o incrementa el secuencial para un usuario dado y un año (letra o número).
-    Reinicia a 1 después de 100.
+    Reinicia a 1 después de 999.
     """
     user = get_user_by_username(username)
     if not user:
@@ -231,14 +220,12 @@ def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
         db.session.commit()
         return year_seq.secuencial
 
-
 # ============================
 # RUTAS
 # ============================
 @app.route("/")
 def home():
     return "Bienvenido a la API de Vinder (SQLAlchemy Edition)"
-
 
 @app.route("/register", methods=["POST"])
 def register():
@@ -273,7 +260,6 @@ def register():
 
     return jsonify({"message": "Usuario registrado exitosamente."}), 201
 
-
 @app.route("/login", methods=["POST"])
 def login():
     data = request.json
@@ -291,7 +277,6 @@ def login():
         return jsonify({"message": "Login exitoso"}), 200
     else:
         return jsonify({"error": "Contraseña incorrecta"}), 401
-
 
 @app.route("/obtener_secuencial", methods=["POST"])
 def obtener_secuencial():
@@ -311,7 +296,6 @@ def obtener_secuencial():
     except Exception as e:
         logger.error(f"Error al obtener secuencial: {e}")
         return jsonify({"error": "Error al obtener el secuencial"}), 500
-
 
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
@@ -368,7 +352,6 @@ def stripe_webhook():
         logger.error(f"Error procesando el webhook: {e}")
         return jsonify({"error": "Error al procesar el webhook"}), 400
 
-
 @app.route("/create-checkout-session", methods=["POST"])
 def create_checkout_session():
     try:
@@ -420,16 +403,13 @@ def create_checkout_session():
         logger.error(f"Error al crear la sesión de pago: {e}")
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/success", methods=["GET"])
 def success():
     return "¡Pago exitoso! Gracias por tu compra."
 
-
 @app.route("/cancel", methods=["GET"])
 def cancel():
     return "El proceso de pago ha sido cancelado o ha fallado."
-
 
 @app.route("/funcion-principal", methods=["GET"])
 def funcion_principal():
@@ -438,7 +418,6 @@ def funcion_principal():
     if not license_is_active(user):
         return jsonify({"error": "Licencia expirada o usuario inexistente. Renueva para continuar."}), 403
     return jsonify({"message": "Acceso permitido a la función principal."})
-
 
 @app.route("/guardar_vin", methods=["POST"])
 def guardar_vin_endpoint():
@@ -467,7 +446,6 @@ def guardar_vin_endpoint():
         logger.error(f"Error al guardar VIN: {e}")
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/ver_vins", methods=["GET"])
 def ver_vins():
     user_name = request.args.get("user")
@@ -491,7 +469,6 @@ def ver_vins():
     except Exception as e:
         logger.error(f"Error al listar VINs: {e}")
         return jsonify({"error": str(e)}), 500
-
 
 # NUEVO ENDPOINT: Exportar VINs a Excel
 @app.route("/export_vins", methods=["GET"])
@@ -532,7 +509,6 @@ def export_vins():
         logger.error(f"Error al exportar VINs: {e}")
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/eliminar_todos_vins", methods=["POST"])
 def eliminar_todos_vins():
     data = request.json
@@ -558,7 +534,6 @@ def eliminar_todos_vins():
         logger.error(f"Error al eliminar todos los VINs: {e}")
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/eliminar_ultimo_vin", methods=["POST"])
 def eliminar_ultimo_vin():
     data = request.json
@@ -578,9 +553,15 @@ def eliminar_ultimo_vin():
         vin_str = ultimo_vin.vin_completo
         if len(vin_str) < 10:
             return jsonify({"error": "El VIN almacenado no tiene el formato esperado."}), 500
+        # Se intenta extraer el código de año desde la posición 10 (índice 9)
         year_letter = vin_str[9]
         if year_letter not in YEAR_MAP:
-            return jsonify({"error": "El VIN no contiene un código de año válido."}), 500
+            # Si no es válido, se utiliza la posición 9 (índice 8) como alternativa
+            if len(vin_str) > 8 and vin_str[8] in YEAR_MAP:
+                year_letter = vin_str[8]
+                logger.warning(f"El VIN {vin_str} tenía el código de año en posición 9 (índice 8). Se usará '{year_letter}' como código de año.")
+            else:
+                return jsonify({"error": "El VIN no contiene un código de año válido."}), 500
         year_int = YEAR_MAP[year_letter]
 
         year_seq = YearSequence.query.filter_by(user_id=user.id, year=year_int).first()
@@ -597,7 +578,6 @@ def eliminar_ultimo_vin():
         logger.error(f"Error al eliminar el último VIN: {e}")
         return jsonify({"error": str(e)}), 500
 
-
 # NUEVO ENDPOINT: Check for Updates con barra de progreso (SSE)
 @app.route("/check_updates", methods=["GET"])
 def check_updates():
@@ -611,7 +591,6 @@ def check_updates():
     def generate():
         try:
             yield "data: Configurando repositorio de actualizaciones...\n\n"
-            # Inicializa la configuración (se asume que existe un archivo de configuración adecuado)
             subprocess.run(["tufup", "init"], check=True)
             yield "data: Repositorio configurado.\n\n"
 
@@ -627,7 +606,6 @@ def check_updates():
         except Exception as e:
             yield f"data: Error durante la verificación de actualizaciones: {e}\n\n"
     return Response(generate(), mimetype="text/event-stream")
-
 
 if __name__ == "__main__":
     try:
