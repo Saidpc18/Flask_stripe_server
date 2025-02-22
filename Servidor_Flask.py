@@ -190,19 +190,22 @@ def update_secuencial(user: User, year_input) -> int:
     return user.secuencial
 
 def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
-    """
-    Obtiene o incrementa el secuencial para un usuario dado y un año (letra o número).
-    Reinicia a 1 después de 999.
-    """
     user = get_user_by_username(username)
     if not user:
         logger.warning(f"Usuario {username} no existe.")
         return 0
 
-    if isinstance(year_input, str) and year_input in YEAR_MAP:
+    # Primero, comprobamos si el input es numérico (por ejemplo, "2025")
+    if isinstance(year_input, str) and year_input.isdigit():
+        year_int = int(year_input)
+    elif isinstance(year_input, str) and year_input in YEAR_MAP:
         year_int = YEAR_MAP[year_input]
     else:
-        year_int = int(year_input)
+        try:
+            year_int = int(year_input)
+        except Exception as e:
+            logger.error(f"Valor de año inválido: {year_input}")
+            return 0
 
     year_seq = YearSequence.query.filter_by(user_id=user.id, year=year_int).first()
 
@@ -219,6 +222,7 @@ def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
 
         db.session.commit()
         return year_seq.secuencial
+
 
 # ============================
 # RUTAS
