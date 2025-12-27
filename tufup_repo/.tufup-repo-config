@@ -1,0 +1,33 @@
+{
+    "app_name": "Vinder",
+    "app_version_attr": "1.0.1",
+    "encrypted_keys": [],
+    "expiration_days": {
+        "root": 1000,
+        "snapshot": 1000,
+        "targets": 1000,
+        "timestamp": 1000
+    },
+    "key_map": {
+        "root": [
+            "root"
+        ],
+        "snapshot": [
+            "snapshot"
+        ],
+        "targets": [
+            "targets"
+        ],
+        "timestamp": [
+            "timestamp"
+        ]
+    },
+    "keys_dir": "C:/Users/saidp/PycharmProjects/pythonProject2/keys_dir",
+    "repo_dir": ".",
+    "thresholds": {
+        "root": 1,
+        "snapshot": 1,
+        "targets": 1,
+        "timestamp": 1
+    }
+}
