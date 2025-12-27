@@ -368,6 +368,10 @@ def create_checkout_session():
         if not price_id:
             return jsonify({"error": "STRIPE_PRICE_ID no está configurado en el servidor"}), 500
 
+        # ✅ LOG PARA DEBUG (no expone secretos)
+        mode = "test" if (stripe.api_key or "").startswith("sk_test") else "live"
+        logger.info(f"[checkout] user={user} mode={mode} STRIPE_PRICE_ID={price_id}")
+
         # IMPORTANTE: si usas subscription, el price debe ser recurrente (recurring)
         checkout_mode = os.getenv("STRIPE_CHECKOUT_MODE", "subscription")  # "subscription" o "payment"
 
