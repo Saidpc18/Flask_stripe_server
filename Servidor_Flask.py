@@ -28,37 +28,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ============================
-# CONFIGURACIÓN DE LA BASE DE DATOS
-# ============================
-DB_CONFIG = {
-    "dbname": os.getenv("DB_NAME", "railway"),
-    "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", "woTCfdaWchoxcsKAmCaAxOBzHusEdLLj"),
-    "host": os.getenv("DB_HOST", "junction.proxy.rlwy.net"),
-    "port": int(os.getenv("DB_PORT", 19506))
-}
-
-print("Configuración de la base de datos:")
-print(DB_CONFIG)
-
+# # ============================
+# # APP + BASE DE DATOS (Railway)
+# # ============================
 app = Flask(__name__)
 
 # Configura DEBUG según la variable de entorno
 app.config["DEBUG"] = False if os.getenv("FLASK_ENV") == "production" else True
 
-# Construimos la URL de la BD
-default_db_url = (
-    f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}"
-    f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
-)
-print(default_db_url)
+db_url = os.getenv("DATABASE_URL")
+if not db_url:
+     raise ValueError("DATABASE_URL no está configurado (Railway la provee automáticamente)")
 
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL", default_db_url)
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-db = SQLAlchemy(app)
-migrate = Migrate(app, db)
+app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 # ============================
 # CONFIGURACIÓN DE STRIPE
