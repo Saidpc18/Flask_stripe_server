@@ -43,6 +43,9 @@ if not db_url:
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
+db = SQLAlchemy(app)
+migrate = Migrate(app, db)
+
 # ============================
 # CONFIGURACIÓN DE STRIPE
 # ============================
@@ -51,8 +54,6 @@ if not stripe.api_key:
     raise ValueError("STRIPE_API_KEY no configurada")
 
 webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
-if not webhook_secret:
-    raise ValueError("STRIPE_WEBHOOK_SECRET no configurado")
 
 if not webhook_secret:
     logger.error("El secreto del webhook no está configurado.")
@@ -347,13 +348,19 @@ def create_checkout_session():
         if not user:
             return jsonify({"error": "Se requiere 'user' o 'username'"}), 400
 
-        price_id = os.getenv("STRIPE_PRICE_ID")
-        if not price_id:
-            return jsonify({"error": "STRIPE_PRICE_ID no está configurado en el servidor"}), 500
+        # Detecta modo por la key cargada
+        mode = "test" if (stripe.api_key or "").startswith("sk_test_") else "live"
 
-        # ✅ LOG PARA DEBUG (no expone secretos)
-        mode = "test" if (stripe.api_key or "").startswith("sk_test") else "live"
-        logger.info(f"[checkout] user={user} mode={mode} STRIPE_PRICE_ID={price_id}")
+        # Usa el price correcto según el modo
+        if mode == "test":
+            price_id = os.getenv("STRIPE_PRICE_ID_TEST") or os.getenv("STRIPE_PRICE_ID")
+        else:
+            price_id = os.getenv("STRIPE_PRICE_ID_LIVE") or os.getenv("STRIPE_PRICE_ID")
+
+        if not price_id:
+            return jsonify({"error": "No hay PRICE configurado para el modo actual"}), 500
+
+        logger.info(f"[checkout] user={user} mode={mode} price_id={price_id}")
 
         # IMPORTANTE: si usas subscription, el price debe ser recurrente (recurring)
         checkout_mode = os.getenv("STRIPE_CHECKOUT_MODE", "subscription")  # "subscription" o "payment"
