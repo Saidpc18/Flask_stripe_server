@@ -3,6 +3,9 @@ import io
 import logging
 from datetime import datetime, timedelta, timezone
 import subprocess
+from decimal import Decimal
+import secrets
+import uuid
 
 import bcrypt
 import pandas as pd
@@ -61,7 +64,7 @@ migrate = Migrate(app, db)
 
 
 # ============================
-# STRIPE
+# STRIPE (opcional, pero lo tienes activo)
 # ============================
 stripe.api_key = os.getenv("STRIPE_API_KEY")
 if not stripe.api_key:
@@ -166,6 +169,29 @@ class YearSequence(db.Model):
         return f"<YearSequence user_id={self.user_id}, year={self.year}, secuencial={self.secuencial}>"
 
 
+# ========= NUEVO: ORDENES DE TRANSFERENCIA =========
+class TransferOrder(db.Model):
+    __tablename__ = "transfer_orders"
+
+    id = db.Column(db.String(36), primary_key=True)  # UUID
+    user_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=False)
+
+    amount_mxn = db.Column(db.Numeric(10, 2), nullable=False)
+    currency = db.Column(db.String(3), default="MXN", nullable=False)
+
+    reference = db.Column(db.String(32), unique=True, nullable=False)  # referencia única
+    status = db.Column(db.String(20), default="pending", nullable=False)
+    # pending | submitted | confirmed | rejected | expired
+
+    created_at = db.Column(db.DateTime, default=db.func.now(), nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=True)
+
+    tracking_key = db.Column(db.String(64), nullable=True)  # clave de rastreo SPEI (lo manda el usuario)
+    submitted_at = db.Column(db.DateTime, nullable=True)
+
+    confirmed_at = db.Column(db.DateTime, nullable=True)
+
+
 # ============================
 # INIT DB (evita 500 por tablas faltantes)
 # ============================
@@ -227,6 +253,31 @@ def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
     year_seq.secuencial = 1 if year_seq.secuencial >= 999 else (year_seq.secuencial + 1)
     db.session.commit()
     return year_seq.secuencial
+
+
+# ========= NUEVO: TRANSFERENCIA DIRECTA (ADMIN + CONFIG) =========
+def require_admin(req) -> bool:
+    expected = (os.getenv("ADMIN_TOKEN") or "").strip()
+    if not expected:
+        return False
+    token = (req.headers.get("Authorization") or "").strip()
+    return token == f"Bearer {expected}"
+
+def make_transfer_reference(username: str) -> str:
+    prefix = (username[:6] or "USER").upper()
+    rand = secrets.token_hex(3).upper()  # 6 chars
+    return f"VND-{prefix}-{rand}"  # ej: VND-VALERI-A1B2C3
+
+def get_transfer_config():
+    clabe = (os.getenv("TRANSFER_CLABE") or "").strip()
+    beneficiary = (os.getenv("TRANSFER_BENEFICIARY_NAME") or "").strip()
+    bank = (os.getenv("TRANSFER_BANK_NAME") or "").strip()
+    amount_str = (os.getenv("TRANSFER_AMOUNT_MXN") or "").strip()
+    ttl_min = int(os.getenv("TRANSFER_ORDER_TTL_MIN", "1440"))
+
+    if not (clabe and beneficiary and bank and amount_str):
+        raise ValueError("Faltan variables TRANSFER_* (CLABE, BENEFICIARY_NAME, BANK_NAME, AMOUNT_MXN)")
+    return clabe, beneficiary, bank, Decimal(amount_str), ttl_min
 
 
 # ============================
@@ -416,13 +467,18 @@ def success():
 def cancel():
     return "El proceso de pago ha sido cancelado o ha fallado."
 
+
+# ============================
+# DIAGNOSTICO DB
+# ============================
 @app.get("/db-regclass")
 def db_regclass():
     row = db.session.execute(text("""
         SELECT
             to_regclass('public.usuarios') AS usuarios,
             to_regclass('public.year_sequences') AS year_sequences,
-            to_regclass('public.subscriptions') AS subscriptions
+            to_regclass('public.subscriptions') AS subscriptions,
+            to_regclass('public.transfer_orders') AS transfer_orders
     """)).mappings().first()
     return dict(row), 200
 
@@ -431,12 +487,12 @@ def db_regclass():
 def db_bootstrap():
     try:
         db.create_all()
-        # re-check
         row = db.session.execute(text("""
             SELECT
                 to_regclass('public.usuarios') AS usuarios,
                 to_regclass('public.year_sequences') AS year_sequences,
-                to_regclass('public.subscriptions') AS subscriptions
+                to_regclass('public.subscriptions') AS subscriptions,
+                to_regclass('public.transfer_orders') AS transfer_orders
         """)).mappings().first()
         return {"ok": True, **dict(row)}, 200
     except Exception as e:
@@ -444,6 +500,9 @@ def db_bootstrap():
         return {"ok": False, "error": str(e)}, 500
 
 
+# ============================
+# LICENSE STATUS
+# ============================
 @app.get("/license-status")
 def license_status():
     username = request.args.get("user")
@@ -475,8 +534,9 @@ def license_status():
         logger.exception(f"Error en /license-status para {username}: {e}")
         return jsonify({"error": "Error consultando la base de datos", "detail": str(e)}), 500
 
+
 # ============================
-# ENDPOINT PROTEGIDO (ARREGLADO)
+# ENDPOINT PROTEGIDO
 # ============================
 @app.route("/funcion-principal", methods=["GET"])
 def funcion_principal():
@@ -494,6 +554,197 @@ def funcion_principal():
         return jsonify({"error": "Licencia expirada o usuario inexistente. Renueva para continuar."}), 403
 
     return jsonify({"message": "Acceso permitido a la función principal."}), 200
+
+
+# ============================
+# TRANSFERENCIA DIRECTA (SPEI) - NUEVO
+# ============================
+@app.post("/create-transfer-order")
+def create_transfer_order():
+    data = request.json or {}
+    username = data.get("user") or data.get("username")
+    if not username:
+        return jsonify({"error": "Se requiere 'user'"}), 400
+
+    user = get_user_by_username(username)
+    if not user:
+        return jsonify({"error": "Usuario no existe"}), 404
+
+    try:
+        clabe, beneficiary, bank, base_amount, ttl_min = get_transfer_config()
+    except Exception as e:
+        logger.exception(f"Transfer config error: {e}")
+        return jsonify({"error": "Transfer config error"}), 500
+
+    # Centavos únicos (opcional) para ayudar conciliación manual
+    cents = Decimal(secrets.randbelow(99) + 1) / Decimal(100)
+    amount = (base_amount + cents).quantize(Decimal("0.01"))
+
+    # referencia única
+    ref = None
+    for _ in range(10):
+        candidate = make_transfer_reference(username)
+        if not TransferOrder.query.filter_by(reference=candidate).first():
+            ref = candidate
+            break
+    if not ref:
+        return jsonify({"error": "No se pudo generar referencia única"}), 500
+
+    order_id = str(uuid.uuid4())
+    expires_at = (utc_now() + timedelta(minutes=ttl_min)).replace(tzinfo=None)
+
+    order = TransferOrder(
+        id=order_id,
+        user_id=user.id,
+        amount_mxn=amount,
+        currency="MXN",
+        reference=ref,
+        status="pending",
+        expires_at=expires_at,
+    )
+    db.session.add(order)
+    db.session.commit()
+
+    return jsonify({
+        "order_id": order_id,
+        "user": username,
+        "amount_mxn": str(amount),
+        "currency": "MXN",
+        "reference": ref,
+        "beneficiary_name": beneficiary,
+        "bank_name": bank,
+        "clabe": clabe,
+        "expires_at": expires_at.isoformat(),
+        "instructions": [
+            "Haz una transferencia SPEI por el monto exacto.",
+            "En 'Concepto' o 'Referencia' escribe EXACTAMENTE la referencia.",
+            "No aceptamos capturas como prueba: se valida con CEP (Banxico)."
+        ]
+    }), 201
+
+
+@app.get("/transfer-status")
+def transfer_status():
+    order_id = request.args.get("order_id")
+    if not order_id:
+        return jsonify({"error": "Falta ?order_id=..."}), 400
+
+    order = TransferOrder.query.filter_by(id=order_id).first()
+    if not order:
+        return jsonify({"error": "Orden no encontrada"}), 404
+
+    # expirar automáticamente
+    if order.status in ("pending", "submitted") and order.expires_at:
+        if order.expires_at < utc_now().replace(tzinfo=None):
+            order.status = "expired"
+            db.session.commit()
+
+    return jsonify({
+        "order_id": order.id,
+        "status": order.status,
+        "amount_mxn": str(order.amount_mxn),
+        "reference": order.reference,
+        "tracking_key": order.tracking_key,
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+        "expires_at": order.expires_at.isoformat() if order.expires_at else None,
+        "submitted_at": order.submitted_at.isoformat() if order.submitted_at else None,
+        "confirmed_at": order.confirmed_at.isoformat() if order.confirmed_at else None,
+    }), 200
+
+
+@app.post("/transfer-submit")
+def transfer_submit():
+    data = request.json or {}
+    order_id = data.get("order_id")
+    tracking_key = (data.get("tracking_key") or "").strip()
+
+    if not order_id or not tracking_key:
+        return jsonify({"error": "Se requiere 'order_id' y 'tracking_key'"}), 400
+
+    order = TransferOrder.query.filter_by(id=order_id).first()
+    if not order:
+        return jsonify({"error": "Orden no encontrada"}), 404
+
+    if order.status in ("confirmed", "rejected", "expired"):
+        return jsonify({"error": f"Orden en estado '{order.status}'"}), 400
+
+    order.tracking_key = tracking_key
+    order.submitted_at = utc_now().replace(tzinfo=None)
+    order.status = "submitted"
+    db.session.commit()
+
+    return jsonify({
+        "message": "Recibido. Se validará con CEP (Banxico) y se activará la licencia al confirmarse.",
+        "order_id": order_id,
+        "status": order.status
+    }), 200
+
+
+@app.post("/admin/confirm-transfer")
+def admin_confirm_transfer():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json or {}
+    order_id = data.get("order_id")
+    if not order_id:
+        return jsonify({"error": "Se requiere 'order_id'"}), 400
+
+    order = TransferOrder.query.filter_by(id=order_id).first()
+    if not order:
+        return jsonify({"error": "Orden no encontrada"}), 404
+
+    if order.status == "confirmed":
+        return jsonify({"message": "Ya estaba confirmada", "order_id": order_id}), 200
+
+    if order.status == "expired":
+        return jsonify({"error": "Orden expirada"}, 400
+
+        )
+
+    user = User.query.filter_by(id=order.user_id).first()
+    if not user:
+        return jsonify({"error": "Usuario asociado no existe"}), 500
+
+    renew_license(user)
+
+    order.status = "confirmed"
+    order.confirmed_at = utc_now().replace(tzinfo=None)
+    db.session.commit()
+
+    return jsonify({
+        "message": "Transferencia confirmada. Licencia activada.",
+        "order_id": order_id,
+        "user": user.username,
+        "license_expiration": user.license_expiration.isoformat() if user.license_expiration else None
+    }), 200
+
+
+@app.get("/admin/transfer-orders")
+def admin_transfer_orders():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    status = (request.args.get("status") or "").strip()
+    q = TransferOrder.query
+    if status:
+        q = q.filter_by(status=status)
+
+    orders = q.order_by(TransferOrder.created_at.desc()).limit(200).all()
+    return jsonify({
+        "count": len(orders),
+        "orders": [{
+            "order_id": o.id,
+            "status": o.status,
+            "amount_mxn": str(o.amount_mxn),
+            "reference": o.reference,
+            "tracking_key": o.tracking_key,
+            "created_at": o.created_at.isoformat() if o.created_at else None,
+            "expires_at": o.expires_at.isoformat() if o.expires_at else None,
+            "submitted_at": o.submitted_at.isoformat() if o.submitted_at else None,
+            "confirmed_at": o.confirmed_at.isoformat() if o.confirmed_at else None,
+        } for o in orders]
+    }), 200
 
 
 # ============================
