@@ -214,6 +214,12 @@ def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
     return year_seq.secuencial
 
 
+
+CODE_VERSION = "railway-2025-12-31-01"
+print("CODE_VERSION:", CODE_VERSION)
+print("RUNNING FILE:", __file__)
+
+
 # ============================
 # RUTAS
 # ============================
