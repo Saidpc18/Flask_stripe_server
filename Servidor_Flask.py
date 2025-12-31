@@ -244,6 +244,15 @@ def version():
 def health():
     return {"status": "ok", "code_version": CODE_VERSION}
 
+@app.get("/db-test")
+def db_test():
+    try:
+        db.session.execute(text("SELECT 1"))
+        return {"ok": True}, 200
+    except Exception as e:
+        logger.exception(f"DB TEST FAILED: {e}")
+        return {"ok": False, "error": str(e)}, 500
+
 
 # ============================
 # AUTH
