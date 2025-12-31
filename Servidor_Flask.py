@@ -847,7 +847,6 @@ def transfer_instructions():
 
     user = get_user_by_username(username)
     if not user or user.id != order.user_id:
-        # 404 para no filtrar si existe una orden de otro usuario
         return jsonify({"error": "Orden no encontrada"}), 404
 
     # Auto-expirar si ya pasó el TTL
@@ -856,14 +855,42 @@ def transfer_instructions():
             order.status = "expired"
             db.session.commit()
 
-    # Toma la config actual (CLABE/Banco/Beneficiario) desde ENV
     try:
         clabe, beneficiary, bank, _, _, _ = get_transfer_config()
     except Exception as e:
         logger.exception(f"Transfer config error: {e}")
         return jsonify({"error": "Transfer config error"}), 500
 
-    return jsonify({
+    if order.status == "pending":
+        instructions = [
+            "Haz una transferencia SPEI por el monto exacto.",
+            "En 'Concepto' o 'Referencia' escribe EXACTAMENTE la referencia.",
+            "Luego envía tu clave de rastreo con /transfer-submit.",
+            "No aceptamos capturas: se valida manualmente en CEP (Banxico)."
+        ]
+    elif order.status == "submitted":
+        instructions = [
+            "Ya recibimos tu clave de rastreo.",
+            "Estamos validando manualmente en CEP (Banxico).",
+            "Si en 24h no cambia a confirmado, contacta soporte con tu order_id."
+        ]
+    elif order.status == "confirmed":
+        instructions = [
+            "Pago confirmado.",
+            "Tu licencia ya está activa. Puedes usar la app normalmente."
+        ]
+    elif order.status == "expired":
+        instructions = [
+            "Esta orden expiró.",
+            "Genera una nueva orden de transferencia para obtener un nuevo monto y referencia."
+        ]
+    else:  # rejected u otros
+        instructions = [
+            "Esta orden fue rechazada.",
+            "Genera una nueva orden o contacta soporte con tu order_id."
+        ]
+
+    resp = {
         "order_id": order.id,
         "user": username,
         "status": order.status,
@@ -874,13 +901,16 @@ def transfer_instructions():
         "bank_name": bank,
         "clabe": clabe,
         "expires_at": order.expires_at.isoformat() if order.expires_at else None,
-        "instructions": [
-            "Haz una transferencia SPEI por el monto exacto.",
-            "En 'Concepto' o 'Referencia' escribe EXACTAMENTE la referencia.",
-            "Luego envía tu clave de rastreo con /transfer-submit.",
-            "No aceptamos capturas: se valida manualmente en CEP (Banxico)."
-        ]
-    }), 200
+        "instructions": instructions
+    }
+
+    # datos extra útiles cuando ya hubo submit/confirm
+    if order.tracking_key:
+        resp["tracking_key"] = order.tracking_key
+    if order.cep_folio:
+        resp["cep_folio"] = order.cep_folio
+
+    return jsonify(resp), 200
 
 
 @app.route("/ver_vins", methods=["GET"])
