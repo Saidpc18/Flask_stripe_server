@@ -443,6 +443,38 @@ def db_bootstrap():
         logger.exception(f"DB bootstrap failed: {e}")
         return {"ok": False, "error": str(e)}, 500
 
+
+@app.get("/license-status")
+def license_status():
+    username = request.args.get("user")
+    if not username:
+        return jsonify({"error": "Falta ?user=..."}), 400
+
+    try:
+        user = get_user_by_username(username)
+        if not user:
+            return jsonify({"user": username, "exists": False, "active": False}), 404
+
+        exp_raw = user.license_expiration  # puede ser None o naive
+        exp_utc = to_utc_aware(exp_raw) if exp_raw else None
+        now = utc_now()
+
+        active = bool(exp_utc and exp_utc > now)
+
+        return jsonify({
+            "user": username,
+            "exists": True,
+            "active": active,
+            "license_expiration_raw": exp_raw.isoformat() if exp_raw else None,
+            "license_expiration_utc": exp_utc.isoformat() if exp_utc else None,
+            "now_utc": now.isoformat(),
+            "seconds_remaining": int((exp_utc - now).total_seconds()) if exp_utc else None
+        }), 200
+
+    except Exception as e:
+        logger.exception(f"Error en /license-status para {username}: {e}")
+        return jsonify({"error": "Error consultando la base de datos", "detail": str(e)}), 500
+
 # ============================
 # ENDPOINT PROTEGIDO (ARREGLADO)
 # ============================
