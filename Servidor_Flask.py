@@ -416,6 +416,32 @@ def success():
 def cancel():
     return "El proceso de pago ha sido cancelado o ha fallado."
 
+@app.get("/db-regclass")
+def db_regclass():
+    row = db.session.execute(text("""
+        SELECT
+            to_regclass('public.usuarios') AS usuarios,
+            to_regclass('public.year_sequences') AS year_sequences,
+            to_regclass('public.subscriptions') AS subscriptions
+    """)).mappings().first()
+    return dict(row), 200
+
+
+@app.post("/db-bootstrap")
+def db_bootstrap():
+    try:
+        db.create_all()
+        # re-check
+        row = db.session.execute(text("""
+            SELECT
+                to_regclass('public.usuarios') AS usuarios,
+                to_regclass('public.year_sequences') AS year_sequences,
+                to_regclass('public.subscriptions') AS subscriptions
+        """)).mappings().first()
+        return {"ok": True, **dict(row)}, 200
+    except Exception as e:
+        logger.exception(f"DB bootstrap failed: {e}")
+        return {"ok": False, "error": str(e)}, 500
 
 # ============================
 # ENDPOINT PROTEGIDO (ARREGLADO)
