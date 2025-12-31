@@ -17,6 +17,7 @@ from tkinter.scrolledtext import ScrolledText
 import xlsxwriter
 from PIL import Image, ImageTk  # Importar Pillow
 
+
 # ============================
 # CONFIGURACIÓN DE LOGGING
 # ============================
@@ -29,6 +30,32 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+
+# ============================
+# CONFIG SERVER (RAILWAY-ONLY)
+# ============================
+# Cambia esto en tu PC si quieres sin tocar código:
+#   setx VINDER_SERVER_URL "https://TU-APP.up.railway.app"
+SERVER_BASE = os.getenv("VINDER_SERVER_URL", "https://flaskstripeserver-production.up.railway.app").rstrip("/")
+
+# Timeouts para que no se quede colgado
+HTTP_TIMEOUT = (5, 30)  # (connect, read)
+
+
+def api_url(path: str) -> str:
+    """Construye una URL absoluta al backend."""
+    if not path.startswith("/"):
+        path = "/" + path
+    return f"{SERVER_BASE}{path}"
+
+
+def safe_json(resp: requests.Response) -> dict:
+    """Intenta leer JSON; si falla, regresa {}."""
+    try:
+        return resp.json()
+    except Exception:
+        return {}
 
 
 # ============================
@@ -50,10 +77,8 @@ def set_icon(window, logo_small=None):
 def check_for_updates():
     """
     Verifica si hay una versión más reciente disponible usando 'tufup'.
-    Si se detecta una nueva versión, muestra una ventana con una barra de progreso mientras se ejecuta la actualización.
-    La URL del repositorio se configura en: https://github.com/Saidpc18/Flask_stripe_server/releases/latest
+    Repositorio: GitHub Releases
     """
-    # Crear una ventana de progreso
     progress_window = tb.Toplevel()
     progress_window.title("Actualizando...")
     progress_window.geometry("300x100")
@@ -65,22 +90,26 @@ def check_for_updates():
 
     def run_update():
         try:
-            # Configurar el repositorio de actualizaciones con la URL de GitHub Releases
-            subprocess.run(["tufup", "configure", "--repo-url", "https://github.com/Saidpc18/Flask_stripe_server/releases/latest"], check=True)
+            subprocess.run(
+                ["tufup", "configure", "--repo-url", "https://github.com/Saidpc18/Flask_stripe_server/releases/latest"],
+                check=True
+            )
             progress_bar.step(20)
-            # Verificar actualizaciones
+
             result = subprocess.run(["tufup", "check"], capture_output=True, text=True, check=True)
             progress_bar.step(20)
+
             if "New version available" in result.stdout:
                 progress_bar.config(mode="determinate", maximum=100)
-                # Iniciar actualización y leer la salida para mostrar el progreso
+
                 process = subprocess.Popen(["tufup", "update"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 progress_value = 40
-                for line in iter(process.stdout.readline, ""):
+                for _line in iter(process.stdout.readline, ""):
                     progress_value = min(progress_value + 5, 100)
                     progress_bar['value'] = progress_value
                 process.stdout.close()
                 process.wait()
+
                 progress_bar.stop()
                 progress_window.destroy()
                 messagebox.showinfo("Actualización", "La aplicación se ha actualizado correctamente.\nReinicia la aplicación para aplicar los cambios.")
@@ -186,6 +215,7 @@ class VinderApp:
         self.load_logo()
         set_icon(self.master, self.logo_photo_small)
         self.master.state("zoomed")
+
         # Variables de estado
         self.var_wmi = tb.StringVar(value="3J9")
         self.var_c4 = tb.StringVar()
@@ -195,9 +225,11 @@ class VinderApp:
         self.var_c8 = tb.StringVar()
         self.var_c10 = tb.StringVar()
         self.var_c11 = tb.StringVar()
+
         self.usuario_actual = None
         self.result_label = None
         self.status_label = None
+
         self.main_frame = tb.Frame(self.master, padding=20)
         self.main_frame.pack(fill="both", expand=True)
         self.mostrar_ventana_inicio()
@@ -215,17 +247,18 @@ class VinderApp:
             self.logo_photo_large = None
 
     # ----------------------------
-    # MÉTODOS PARA LLAMADAS AL SERVIDOR
+    # MÉTODOS PARA LLAMADAS AL SERVIDOR (RAILWAY)
     # ----------------------------
     def iniciar_pago(self):
         if not self.usuario_actual:
             messagebox.showerror("Error", "Inicia sesión para realizar el pago.")
             return
         try:
-            server_url = "https://flask-stripe-server.onrender.com/create-checkout-session"
-            response = requests.post(server_url, json={"user": self.usuario_actual})
+            server_url = api_url("/create-checkout-session")
+            response = requests.post(server_url, json={"user": self.usuario_actual}, timeout=HTTP_TIMEOUT)
+
             if response.status_code == 200:
-                data = response.json()
+                data = safe_json(response)
                 url_pago = data.get("url", "")
                 if url_pago:
                     webbrowser.open(url_pago)
@@ -233,8 +266,10 @@ class VinderApp:
                 else:
                     messagebox.showerror("Error", "No se recibió una URL válida del servidor.")
             else:
-                err = response.json().get("error", "Error desconocido")
+                data = safe_json(response)
+                err = data.get("error", f"HTTP {response.status_code}")
                 messagebox.showerror("Error", f"No se pudo iniciar el proceso de pago: {err}")
+
         except requests.RequestException as e:
             messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
 
@@ -243,14 +278,16 @@ class VinderApp:
             messagebox.showerror("Error", "No hay usuario activo.")
             return False
         try:
-            url = "https://flask-stripe-server.onrender.com/funcion-principal"
-            resp = requests.get(url, params={"user": self.usuario_actual})
-            data = resp.json()
+            url = api_url("/funcion-principal")
+            resp = requests.get(url, params={"user": self.usuario_actual}, timeout=HTTP_TIMEOUT)
+            data = safe_json(resp)
+
             if resp.status_code == 403 or "error" in data:
                 msg = data.get("error", "Licencia inválida.")
                 messagebox.showerror("Suscripción requerida", msg)
                 return False
             return True
+
         except requests.RequestException as e:
             messagebox.showerror("Error", f"No se pudo verificar la licencia: {e}")
             return False
@@ -259,15 +296,19 @@ class VinderApp:
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
-        url = "https://flask-stripe-server.onrender.com/guardar_vin"
+
+        url = api_url("/guardar_vin")
         payload = {"user": self.usuario_actual, **vin_data}
+
         try:
-            resp = requests.post(url, json=payload)
+            resp = requests.post(url, json=payload, timeout=HTTP_TIMEOUT)
             if resp.status_code == 200:
                 messagebox.showinfo("Éxito", "VIN guardado en PostgreSQL.")
             else:
-                err = resp.json().get("error", "Error desconocido")
+                data = safe_json(resp)
+                err = data.get("error", f"HTTP {resp.status_code}")
                 messagebox.showerror("Error", f"No se pudo guardar el VIN: {err}")
+
         except requests.RequestException as e:
             messagebox.showerror("Error", f"Error al conectarse al servidor Flask: {e}")
 
@@ -275,34 +316,40 @@ class VinderApp:
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return []
-        url = "https://flask-stripe-server.onrender.com/ver_vins"
+
+        url = api_url("/ver_vins")
+
         try:
-            resp = requests.get(url, params={"user": self.usuario_actual})
+            resp = requests.get(url, params={"user": self.usuario_actual}, timeout=HTTP_TIMEOUT)
             if resp.status_code == 200:
-                data = resp.json()
+                data = safe_json(resp)
                 return data.get("vins", [])
             else:
-                err = resp.json().get("error", "Error desconocido")
+                data = safe_json(resp)
+                err = data.get("error", f"HTTP {resp.status_code}")
                 messagebox.showerror("Error", f"No se pudo obtener VINs: {err}")
                 return []
+
         except requests.RequestException as e:
             messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
             return []
 
     def obtener_secuencial_desde_servidor(self, year_code):
-        url = "https://flask-stripe-server.onrender.com/obtener_secuencial"
+        url = api_url("/obtener_secuencial")
         payload = {"user": self.usuario_actual, "year": year_code}
+
         try:
-            resp = requests.post(url, json=payload)
+            resp = requests.post(url, json=payload, timeout=HTTP_TIMEOUT)
             if resp.status_code == 200:
-                data = resp.json()
+                data = safe_json(resp)
                 sec = data.get("secuencial", 0)
-                # Utiliza el secuencial tal como lo devuelve el servidor
                 return sec
             else:
-                err = resp.json().get("error", "Error desconocido")
+                data = safe_json(resp)
+                err = data.get("error", f"HTTP {resp.status_code}")
                 messagebox.showerror("Error", f"Error al obtener secuencial: {err}")
                 return 0
+
         except requests.RequestException as e:
             messagebox.showerror("Error", f"No se pudo conectar a /obtener_secuencial: {e}")
             return 0
@@ -311,9 +358,11 @@ class VinderApp:
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
-        url = f"https://flask-stripe-server.onrender.com/export_vins?user={self.usuario_actual}"
+
+        url = api_url("/export_vins")
+
         try:
-            response = requests.get(url)
+            response = requests.get(url, params={"user": self.usuario_actual}, timeout=HTTP_TIMEOUT)
             if response.status_code == 200:
                 filename = filedialog.asksaveasfilename(
                     defaultextension=".xlsx",
@@ -327,8 +376,10 @@ class VinderApp:
                 else:
                     messagebox.showinfo("Exportar VINs", "Exportación cancelada.")
             else:
-                err = response.json().get("error", "Error desconocido")
+                data = safe_json(response)
+                err = data.get("error", f"HTTP {response.status_code}")
                 messagebox.showerror("Error", f"No se pudo exportar los VINs: {err}")
+
         except requests.RequestException as e:
             messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
 
@@ -340,14 +391,17 @@ class VinderApp:
             return
         if not messagebox.askyesno("Confirmación", "¿Estás seguro que deseas eliminar TODOS los VINs?"):
             return
+
         try:
-            url = "https://flask-stripe-server.onrender.com/eliminar_todos_vins"
-            resp = requests.post(url, json={"user": self.usuario_actual})
+            url = api_url("/eliminar_todos_vins")
+            resp = requests.post(url, json={"user": self.usuario_actual}, timeout=HTTP_TIMEOUT)
             if resp.status_code == 200:
                 messagebox.showinfo("Éxito", "Todos los VINs han sido eliminados y el secuencial se ha reiniciado.")
             else:
-                err = resp.json().get("error", "Error desconocido")
+                data = safe_json(resp)
+                err = data.get("error", f"HTTP {resp.status_code}")
                 messagebox.showerror("Error", f"No se pudo eliminar todos los VINs: {err}")
+
         except requests.RequestException as e:
             messagebox.showerror("Error", f"No se pudo conectar al servidor: {e}")
 
@@ -359,14 +413,17 @@ class VinderApp:
             return
         if not messagebox.askyesno("Confirmación", "¿Estás seguro que deseas eliminar el ÚLTIMO VIN?"):
             return
+
         try:
-            url = "https://flask-stripe-server.onrender.com/eliminar_ultimo_vin"
-            resp = requests.post(url, json={"user": self.usuario_actual})
+            url = api_url("/eliminar_ultimo_vin")
+            resp = requests.post(url, json={"user": self.usuario_actual}, timeout=HTTP_TIMEOUT)
             if resp.status_code == 200:
                 messagebox.showinfo("Éxito", "El último VIN ha sido eliminado y el secuencial se ha actualizado.")
             else:
-                err = resp.json().get("error", "Error desconocido")
+                data = safe_json(resp)
+                err = data.get("error", f"HTTP {resp.status_code}")
                 messagebox.showerror("Error", f"No se pudo eliminar el último VIN: {err}")
+
         except requests.RequestException as e:
             messagebox.showerror("Error", f"No se pudo conectar al servidor: {e}")
 
@@ -423,15 +480,17 @@ class VinderApp:
             if not username or not password:
                 messagebox.showerror("Error", "Completa todos los campos.")
                 return
-            register_url = "https://flask-stripe-server.onrender.com/register"
+
+            register_url = api_url("/register")
+
             try:
-                response = requests.post(register_url, json={"username": username, "password": password})
+                response = requests.post(register_url, json={"username": username, "password": password}, timeout=HTTP_TIMEOUT)
                 if response.status_code == 201:
                     messagebox.showinfo("Éxito", "Cuenta creada exitosamente. Ahora puedes iniciar sesión.")
                     self.mostrar_ventana_inicio()
                 else:
-                    data = response.json()
-                    err = data.get("error", "Error desconocido")
+                    data = safe_json(response)
+                    err = data.get("error", f"HTTP {response.status_code}")
                     messagebox.showerror("Error", f"Registro fallido: {err}")
             except requests.RequestException as e:
                 messagebox.showerror("Error", f"Error al conectarse con el servidor: {e}")
@@ -470,16 +529,18 @@ class VinderApp:
             if not user or not pw:
                 messagebox.showerror("Error", "Completa todos los campos.")
                 return
-            login_url = "https://flask-stripe-server.onrender.com/login"
+
+            login_url = api_url("/login")
+
             try:
-                response = requests.post(login_url, json={"username": user, "password": pw})
+                response = requests.post(login_url, json={"username": user, "password": pw}, timeout=HTTP_TIMEOUT)
                 if response.status_code == 200:
                     messagebox.showinfo("Éxito", f"Bienvenido, {user}")
                     self.usuario_actual = user
                     self.ventana_principal()
                 else:
-                    data = response.json()
-                    err = data.get("error", "Error desconocido")
+                    data = safe_json(response)
+                    err = data.get("error", f"HTTP {response.status_code}")
                     messagebox.showerror("Error", f"Login fallido: {err}")
             except requests.RequestException as e:
                 messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
@@ -553,14 +614,12 @@ class VinderApp:
         self.menu_c11.pack()
 
     def generar_vin(self):
-        # Verificamos suscripción/licencia
         if not self.verificar_licencia():
             return
         if not self.usuario_actual:
             messagebox.showerror("Error", "No hay usuario activo.")
             return
 
-        # Obtenemos los valores elegidos
         wmi = self.var_wmi.get().strip().upper()
         c4 = posicion_4.get(self.var_c4.get(), "")
         c5 = posicion_5.get(self.var_c5.get(), "")
@@ -574,7 +633,6 @@ class VinderApp:
             messagebox.showerror("Error", "Faltan datos en uno de los catálogos.")
             return
 
-        # Obtenemos un secuencial desde el servidor
         sec = self.obtener_secuencial_desde_servidor(c10)
         if sec == 0:
             return
@@ -582,16 +640,11 @@ class VinderApp:
         sec_str = str(sec).zfill(3)
         fixed_12_14 = "098"
 
-        # Se arma el VIN sin la posición 9 para poder calcular el dígito verificador
         valores_sin_pos9 = f"{wmi}{c4}{c5}{c6}{c7}{c8}{c10}{c11}{fixed_12_14}{sec_str}"
-
-        # Calculamos la posición 9 con la función que multiplica por pesos
         pos9 = self.calcular_posicion_9(valores_sin_pos9)
 
-        # Formamos el VIN final
         vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{pos9}{c10}{c11}{fixed_12_14}{sec_str}"
 
-        # Guardamos en el servidor
         vin_data = {
             "wmi": wmi,
             "c4": c4,
@@ -608,7 +661,6 @@ class VinderApp:
         }
         self.guardar_vin_en_flask(vin_data)
 
-        # Mostramos en la interfaz
         if self.result_label:
             self.result_label.config(text=f"VIN/NIV: {vin_completo}", font=("Helvetica", 24, "bold"))
         else:
@@ -616,37 +668,26 @@ class VinderApp:
             self.result_label.pack(pady=5)
 
     def calcular_posicion_9(self, valores):
-        """
-        Calcula el dígito verificador (posición 9) del VIN,
-        aplicando los pesos (8,7,6,5,4,3,2,10,9,8,7,6,5,4,3,2) a cada carácter convertido.
-        Además, muestra en una barra de estado el detalle de la conversión.
-        """
-
-        # Diccionario de sustituciones de caracteres a valores numéricos
         sustituciones = {
             "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
             "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9, "S": 2,
             "T": 3, "U": 4, "V": 5, "W": 6, "X": 7, "Y": 8, "Z": 9
         }
-        # Agregamos también las sustituciones para dígitos
         for i in range(10):
             sustituciones[str(i)] = i
 
-        # Pesos para cada posición del VIN (excepto que la 9na se revisa como check digit)
         weights = [8, 7, 6, 5, 4, 3, 2, 10, 9, 8, 7, 6, 5, 4, 3, 2]
 
         mapping = []
         suma = 0
 
-        # Convertimos cada carácter y lo multiplicamos por su peso
         for i, char in enumerate(valores):
             valor_num = sustituciones.get(char, 0)
-            peso = weights[i]  # tomamos el peso según la posición
+            peso = weights[i]
             valor_ponderado = valor_num * peso
             mapping.append(f"'{char}'→{valor_num} * {peso} = {valor_ponderado}")
             suma += valor_ponderado
 
-        # Mostramos el detalle de la conversión en dos líneas para mayor legibilidad
         mitad = len(mapping) // 2
         linea1 = "    ".join(mapping[:mitad])
         linea2 = "    ".join(mapping[mitad:])
@@ -658,15 +699,12 @@ class VinderApp:
             + f"Suma total ponderada: {suma}\n"
         )
 
-        # Cálculo de dígito verificador (módulo 11)
         resultado_modulo = suma % 11
         conversion_details += f"Módulo 11: {resultado_modulo}\n"
 
-        # Asignación del dígito verificador (10 se representa como 'X')
         digito_verificador = "X" if resultado_modulo == 10 else str(resultado_modulo)
         conversion_details += f"Dígito verificador: {digito_verificador}"
 
-        # Mostrar el resultado en la barra de estado o crearlo si no existe
         if self.status_label:
             self.status_label.config(text=conversion_details)
         else:
@@ -684,7 +722,6 @@ class VinderApp:
         return digito_verificador
 
     def ventana_lista_vins(self):
-        """Muestra la lista de VINs generados en una ventana secundaria (Toplevel)."""
         if not self.verificar_licencia():
             return
         if not self.usuario_actual:
