@@ -30,7 +30,7 @@ print("RUNNING FILE:", __file__)
 # LOGGING
 # ============================
 logging.basicConfig(
-    level=logging.INFO,  # pon DEBUG si quieres más detalle
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -41,7 +41,6 @@ logger = logging.getLogger(__name__)
 # ============================
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-
 app.config["DEBUG"] = False if os.getenv("FLASK_ENV") == "production" else True
 
 
@@ -52,7 +51,6 @@ db_url = os.getenv("DATABASE_URL")
 if not db_url:
     raise ValueError("DATABASE_URL no está configurado (Railway la provee automáticamente)")
 
-# Fix común: postgres:// -> postgresql://
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
@@ -64,17 +62,18 @@ migrate = Migrate(app, db)
 
 
 # ============================
-# STRIPE (opcional, pero lo tienes activo)
+# STRIPE (opcional)
 # ============================
-stripe.api_key = os.getenv("STRIPE_API_KEY")
-if not stripe.api_key:
-    raise ValueError("Falta STRIPE_API_KEY (sk_test_... o sk_live_...)")
+STRIPE_ENABLED = bool((os.getenv("STRIPE_API_KEY") or "").strip())
+stripe.api_key = os.getenv("STRIPE_API_KEY") if STRIPE_ENABLED else None
+webhook_secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip() if STRIPE_ENABLED else ""
 
-webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
-if not webhook_secret:
-    raise ValueError("Falta STRIPE_WEBHOOK_SECRET (whsec_...)")
+if STRIPE_ENABLED and not webhook_secret:
+    logger.warning("STRIPE está habilitado pero falta STRIPE_WEBHOOK_SECRET (whsec_...). El webhook fallará.")
 
 def get_price_id() -> str:
+    if not STRIPE_ENABLED:
+        return ""
     mode = "test" if (stripe.api_key or "").startswith("sk_test_") else "live"
     if mode == "test":
         return os.getenv("STRIPE_PRICE_ID_TEST") or os.getenv("STRIPE_PRICE_ID") or ""
@@ -91,7 +90,6 @@ def to_utc_aware(dt: datetime | None):
     if dt is None:
         return None
     if dt.tzinfo is None:
-        # si viene naive, asumimos UTC para no crashear
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
@@ -118,15 +116,12 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
-    license_expiration = db.Column(db.DateTime, nullable=True)  # puede ser naive
+    license_expiration = db.Column(db.DateTime, nullable=True)  # naive ok
     secuencial = db.Column(db.Integer, default=0)
     last_year = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=db.func.now())
 
     vins = db.relationship("VIN", backref="owner", lazy=True)
-
-    def __repr__(self):
-        return f"<User {self.username}>"
 
 
 class VIN(db.Model):
@@ -136,9 +131,6 @@ class VIN(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=False)
     vin_completo = db.Column(db.String(17), nullable=False)
     created_at = db.Column(db.DateTime, default=db.func.now())
-
-    def __repr__(self):
-        return f"<VIN {self.vin_completo}>"
 
 
 class Subscription(db.Model):
@@ -151,9 +143,6 @@ class Subscription(db.Model):
     current_period_end = db.Column(db.DateTime(timezone=True))
     created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
 
-    def __repr__(self):
-        return f"<Subscription {self.subscription_id} - {self.status}>"
-
 
 class YearSequence(db.Model):
     __tablename__ = "year_sequences"
@@ -165,11 +154,7 @@ class YearSequence(db.Model):
 
     __table_args__ = (db.UniqueConstraint("user_id", "year", name="uq_user_year"),)
 
-    def __repr__(self):
-        return f"<YearSequence user_id={self.user_id}, year={self.year}, secuencial={self.secuencial}>"
 
-
-# ========= NUEVO: ORDENES DE TRANSFERENCIA =========
 class TransferOrder(db.Model):
     __tablename__ = "transfer_orders"
 
@@ -179,28 +164,43 @@ class TransferOrder(db.Model):
     amount_mxn = db.Column(db.Numeric(10, 2), nullable=False)
     currency = db.Column(db.String(3), default="MXN", nullable=False)
 
-    reference = db.Column(db.String(32), unique=True, nullable=False)  # referencia única
+    reference = db.Column(db.String(32), unique=True, nullable=False)
     status = db.Column(db.String(20), default="pending", nullable=False)
     # pending | submitted | confirmed | rejected | expired
 
     created_at = db.Column(db.DateTime, default=db.func.now(), nullable=False)
     expires_at = db.Column(db.DateTime, nullable=True)
 
-    tracking_key = db.Column(db.String(64), nullable=True)  # clave de rastreo SPEI (lo manda el usuario)
+    tracking_key = db.Column(db.String(64), nullable=True)
     submitted_at = db.Column(db.DateTime, nullable=True)
-
     confirmed_at = db.Column(db.DateTime, nullable=True)
+
+    # evidencia (manual CEP)
+    validated_by = db.Column(db.String(50), nullable=True)
+    validation_note = db.Column(db.String(400), nullable=True)
+    cep_folio = db.Column(db.String(64), nullable=True)
 
 
 # ============================
-# INIT DB (evita 500 por tablas faltantes)
+# INIT DB + PATCH ESQUEMA
 # ============================
 with app.app_context():
     try:
         db.create_all()
         db.session.execute(text("SELECT 1"))
-        logger.info("DB ready (create_all + SELECT 1).")
+
+        # Patch seguro (si ya existe transfer_orders sin estas columnas)
+        db.session.execute(text("""
+            ALTER TABLE transfer_orders
+              ADD COLUMN IF NOT EXISTS validated_by varchar(50),
+              ADD COLUMN IF NOT EXISTS validation_note varchar(400),
+              ADD COLUMN IF NOT EXISTS cep_folio varchar(64);
+        """))
+        db.session.commit()
+
+        logger.info("DB ready (create_all + schema patch + SELECT 1).")
     except Exception as e:
+        db.session.rollback()
         logger.exception(f"DB init failed: {e}")
 
 
@@ -219,7 +219,6 @@ def license_is_active(user: User) -> bool:
 def renew_license(user: User) -> bool:
     if not user:
         return False
-    # guardamos naive compatible (UTC sin tz) para evitar dramas con columnas sin tz
     new_exp = utc_now() + timedelta(days=365)
     user.license_expiration = new_exp.replace(tzinfo=None)
     db.session.commit()
@@ -255,7 +254,7 @@ def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
     return year_seq.secuencial
 
 
-# ========= NUEVO: TRANSFERENCIA DIRECTA (ADMIN + CONFIG) =========
+# ========= TRANSFERENCIA DIRECTA (ADMIN + CONFIG) =========
 def require_admin(req) -> bool:
     expected = (os.getenv("ADMIN_TOKEN") or "").strip()
     if not expected:
@@ -265,8 +264,8 @@ def require_admin(req) -> bool:
 
 def make_transfer_reference(username: str) -> str:
     prefix = (username[:6] or "USER").upper()
-    rand = secrets.token_hex(3).upper()  # 6 chars
-    return f"VND-{prefix}-{rand}"  # ej: VND-VALERI-A1B2C3
+    rand = secrets.token_hex(3).upper()
+    return f"VND-{prefix}-{rand}"
 
 def get_transfer_config():
     clabe = (os.getenv("TRANSFER_CLABE") or "").strip()
@@ -274,10 +273,11 @@ def get_transfer_config():
     bank = (os.getenv("TRANSFER_BANK_NAME") or "").strip()
     amount_str = (os.getenv("TRANSFER_AMOUNT_MXN") or "").strip()
     ttl_min = int(os.getenv("TRANSFER_ORDER_TTL_MIN", "1440"))
+    use_unique_cents = (os.getenv("TRANSFER_USE_UNIQUE_CENTS", "true").strip().lower() in ("1", "true", "yes"))
 
     if not (clabe and beneficiary and bank and amount_str):
         raise ValueError("Faltan variables TRANSFER_* (CLABE, BENEFICIARY_NAME, BANK_NAME, AMOUNT_MXN)")
-    return clabe, beneficiary, bank, Decimal(amount_str), ttl_min
+    return clabe, beneficiary, bank, Decimal(amount_str), ttl_min, use_unique_cents
 
 
 # ============================
@@ -388,6 +388,11 @@ def obtener_secuencial():
 # ============================
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
+    if not STRIPE_ENABLED:
+        return jsonify({"error": "Stripe disabled"}), 503
+    if not webhook_secret:
+        return jsonify({"error": "Stripe webhook secret missing"}), 500
+
     payload = request.get_data(cache=False)
     sig_header = request.headers.get("Stripe-Signature")
 
@@ -424,6 +429,9 @@ def stripe_webhook():
 # ============================
 @app.route("/create-checkout-session", methods=["POST"])
 def create_checkout_session():
+    if not STRIPE_ENABLED:
+        return jsonify({"error": "Stripe disabled"}), 503
+
     try:
         data = request.json or {}
         user = data.get("user") or data.get("username")
@@ -483,23 +491,6 @@ def db_regclass():
     return dict(row), 200
 
 
-@app.post("/db-bootstrap")
-def db_bootstrap():
-    try:
-        db.create_all()
-        row = db.session.execute(text("""
-            SELECT
-                to_regclass('public.usuarios') AS usuarios,
-                to_regclass('public.year_sequences') AS year_sequences,
-                to_regclass('public.subscriptions') AS subscriptions,
-                to_regclass('public.transfer_orders') AS transfer_orders
-        """)).mappings().first()
-        return {"ok": True, **dict(row)}, 200
-    except Exception as e:
-        logger.exception(f"DB bootstrap failed: {e}")
-        return {"ok": False, "error": str(e)}, 500
-
-
 # ============================
 # LICENSE STATUS
 # ============================
@@ -514,7 +505,7 @@ def license_status():
         if not user:
             return jsonify({"user": username, "exists": False, "active": False}), 404
 
-        exp_raw = user.license_expiration  # puede ser None o naive
+        exp_raw = user.license_expiration
         exp_utc = to_utc_aware(exp_raw) if exp_raw else None
         now = utc_now()
 
@@ -557,7 +548,7 @@ def funcion_principal():
 
 
 # ============================
-# TRANSFERENCIA DIRECTA (SPEI) - NUEVO
+# TRANSFERENCIA DIRECTA (SPEI)
 # ============================
 @app.post("/create-transfer-order")
 def create_transfer_order():
@@ -571,14 +562,18 @@ def create_transfer_order():
         return jsonify({"error": "Usuario no existe"}), 404
 
     try:
-        clabe, beneficiary, bank, base_amount, ttl_min = get_transfer_config()
+        clabe, beneficiary, bank, base_amount, ttl_min, use_unique_cents = get_transfer_config()
     except Exception as e:
         logger.exception(f"Transfer config error: {e}")
         return jsonify({"error": "Transfer config error"}), 500
 
-    # Centavos únicos (opcional) para ayudar conciliación manual
-    cents = Decimal(secrets.randbelow(99) + 1) / Decimal(100)
-    amount = (base_amount + cents).quantize(Decimal("0.01"))
+    # Centavos únicos (ayuda conciliación manual)
+    amount = base_amount
+    if use_unique_cents:
+        cents = Decimal(secrets.randbelow(99) + 1) / Decimal(100)
+        amount = (base_amount + cents).quantize(Decimal("0.01"))
+    else:
+        amount = base_amount.quantize(Decimal("0.01"))
 
     # referencia única
     ref = None
@@ -618,7 +613,8 @@ def create_transfer_order():
         "instructions": [
             "Haz una transferencia SPEI por el monto exacto.",
             "En 'Concepto' o 'Referencia' escribe EXACTAMENTE la referencia.",
-            "No aceptamos capturas como prueba: se valida con CEP (Banxico)."
+            "Luego envía tu clave de rastreo con /transfer-submit.",
+            "No aceptamos capturas: se valida manualmente en CEP (Banxico)."
         ]
     }), 201
 
@@ -649,6 +645,9 @@ def transfer_status():
         "expires_at": order.expires_at.isoformat() if order.expires_at else None,
         "submitted_at": order.submitted_at.isoformat() if order.submitted_at else None,
         "confirmed_at": order.confirmed_at.isoformat() if order.confirmed_at else None,
+        "cep_folio": order.cep_folio,
+        "validated_by": order.validated_by,
+        "validation_note": order.validation_note
     }), 200
 
 
@@ -668,18 +667,27 @@ def transfer_submit():
     if order.status in ("confirmed", "rejected", "expired"):
         return jsonify({"error": f"Orden en estado '{order.status}'"}), 400
 
+    # expirar si ya pasó
+    if order.expires_at and order.expires_at < utc_now().replace(tzinfo=None):
+        order.status = "expired"
+        db.session.commit()
+        return jsonify({"error": "Orden expirada"}), 400
+
     order.tracking_key = tracking_key
     order.submitted_at = utc_now().replace(tzinfo=None)
     order.status = "submitted"
     db.session.commit()
 
     return jsonify({
-        "message": "Recibido. Se validará con CEP (Banxico) y se activará la licencia al confirmarse.",
+        "message": "Recibido. Se validará manualmente en CEP y se activará la licencia al confirmarse.",
         "order_id": order_id,
         "status": order.status
     }), 200
 
 
+# ============================
+# ADMIN: CONFIRMAR / RECHAZAR
+# ============================
 @app.post("/admin/confirm-transfer")
 def admin_confirm_transfer():
     if not require_admin(request):
@@ -687,6 +695,10 @@ def admin_confirm_transfer():
 
     data = request.json or {}
     order_id = data.get("order_id")
+    cep_folio = (data.get("cep_folio") or "").strip()
+    note = (data.get("note") or "").strip()
+    admin_name = (data.get("validated_by") or "admin").strip()
+
     if not order_id:
         return jsonify({"error": "Se requiere 'order_id'"}), 400
 
@@ -698,9 +710,19 @@ def admin_confirm_transfer():
         return jsonify({"message": "Ya estaba confirmada", "order_id": order_id}), 200
 
     if order.status == "expired":
-        return jsonify({"error": "Orden expirada"}, 400
+        return jsonify({"error": "Orden expirada"}), 400
 
-        )
+    # ✅ seguridad: solo confirmar si ya fue submitted
+    if order.status != "submitted":
+        return jsonify({"error": f"La orden debe estar en 'submitted'. Estado actual: {order.status}"}), 400
+
+    # ✅ fuerza tracking_key (usuario tuvo que hacer /transfer-submit)
+    if not order.tracking_key:
+        return jsonify({"error": "La orden no tiene tracking_key. Usa /transfer-submit primero."}), 400
+
+    # ✅ evidencia mínima (manual CEP)
+    if not cep_folio:
+        return jsonify({"error": "Falta 'cep_folio' (captura el folio/identificador del CEP)."}), 400
 
     user = User.query.filter_by(id=order.user_id).first()
     if not user:
@@ -710,14 +732,48 @@ def admin_confirm_transfer():
 
     order.status = "confirmed"
     order.confirmed_at = utc_now().replace(tzinfo=None)
+    order.cep_folio = cep_folio
+    order.validation_note = note[:400] if note else None
+    order.validated_by = admin_name[:50]
     db.session.commit()
 
     return jsonify({
         "message": "Transferencia confirmada. Licencia activada.",
-        "order_id": order_id,
+        "order_id": order.id,
         "user": user.username,
+        "amount_mxn": str(order.amount_mxn),
+        "reference": order.reference,
+        "tracking_key": order.tracking_key,
+        "cep_folio": order.cep_folio,
         "license_expiration": user.license_expiration.isoformat() if user.license_expiration else None
     }), 200
+
+
+@app.post("/admin/reject-transfer")
+def admin_reject_transfer():
+    if not require_admin(request):
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json or {}
+    order_id = data.get("order_id")
+    reason = (data.get("reason") or "").strip()
+
+    if not order_id:
+        return jsonify({"error": "Se requiere 'order_id'"}), 400
+
+    order = TransferOrder.query.filter_by(id=order_id).first()
+    if not order:
+        return jsonify({"error": "Orden no encontrada"}), 404
+
+    if order.status in ("confirmed", "expired"):
+        return jsonify({"error": f"No se puede rechazar en estado {order.status}"}), 400
+
+    order.status = "rejected"
+    order.validation_note = (reason[:400] if reason else "Rechazado por admin (CEP no coincide)")
+    order.validated_by = "admin"
+    db.session.commit()
+
+    return jsonify({"message": "Orden rechazada", "order_id": order_id, "status": order.status}), 200
 
 
 @app.get("/admin/transfer-orders")
@@ -743,6 +799,9 @@ def admin_transfer_orders():
             "expires_at": o.expires_at.isoformat() if o.expires_at else None,
             "submitted_at": o.submitted_at.isoformat() if o.submitted_at else None,
             "confirmed_at": o.confirmed_at.isoformat() if o.confirmed_at else None,
+            "cep_folio": o.cep_folio,
+            "validated_by": o.validated_by,
+            "validation_note": o.validation_note
         } for o in orders]
     }), 200
 
@@ -787,10 +846,7 @@ def ver_vins():
 
         vins = user.vins
         resultado = [
-            {
-                "vin_completo": vin.vin_completo,
-                "created_at": vin.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-            }
+            {"vin_completo": vin.vin_completo, "created_at": vin.created_at.strftime("%Y-%m-%d %H:%M:%S")}
             for vin in vins
         ]
         return jsonify({"vins": resultado}), 200
@@ -810,10 +866,8 @@ def export_vins():
         if not user:
             return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
 
-        data = [
-            {"VIN": vin.vin_completo, "Fecha de Creación": vin.created_at.strftime("%Y-%m-%d %H:%M:%S")}
-            for vin in user.vins
-        ]
+        data = [{"VIN": vin.vin_completo, "Fecha de Creación": vin.created_at.strftime("%Y-%m-%d %H:%M:%S")}
+                for vin in user.vins]
         df = pd.DataFrame(data)
 
         output = io.BytesIO()
@@ -878,7 +932,6 @@ def eliminar_ultimo_vin():
         if year_letter not in YEAR_MAP:
             if len(vin_str) > 8 and vin_str[8] in YEAR_MAP:
                 year_letter = vin_str[8]
-                logger.warning(f"El VIN {vin_str} tenía el código de año en pos 9 (idx 8). Se usará '{year_letter}'.")
             else:
                 return jsonify({"error": "El VIN no contiene un código de año válido."}), 500
 
@@ -898,7 +951,7 @@ def eliminar_ultimo_vin():
 
 
 # ============================
-# TUFUP (solo si lo usas)
+# TUFUP (si lo usas)
 # ============================
 @app.route("/check_updates", methods=["GET"])
 def check_updates():
@@ -910,13 +963,7 @@ def check_updates():
 
             yield "data: Verificando actualizaciones...\n\n"
             result = subprocess.run(["tufup", "targets"], capture_output=True, text=True, check=True)
-            stdout = result.stdout
-            yield f"data: Resultado: {stdout}\n\n"
-
-            if "New version available" in stdout:
-                yield "data: Actualización disponible. Descarga la nueva versión desde la release.\n\n"
-            else:
-                yield "data: No hay actualizaciones disponibles.\n\n"
+            yield f"data: Resultado: {result.stdout}\n\n"
         except Exception as e:
             yield f"data: Error durante verificación: {e}\n\n"
 
