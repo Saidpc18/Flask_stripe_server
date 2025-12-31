@@ -833,6 +833,56 @@ def guardar_vin_endpoint():
         return jsonify({"error": "Error al guardar VIN"}), 500
 
 
+@app.get("/transfer-instructions")
+def transfer_instructions():
+    order_id = request.args.get("order_id")
+    username = request.args.get("user")
+
+    if not order_id or not username:
+        return jsonify({"error": "Falta ?order_id=...&user=..."}), 400
+
+    order = TransferOrder.query.filter_by(id=order_id).first()
+    if not order:
+        return jsonify({"error": "Orden no encontrada"}), 404
+
+    user = get_user_by_username(username)
+    if not user or user.id != order.user_id:
+        # 404 para no filtrar si existe una orden de otro usuario
+        return jsonify({"error": "Orden no encontrada"}), 404
+
+    # Auto-expirar si ya pasó el TTL
+    if order.status in ("pending", "submitted") and order.expires_at:
+        if order.expires_at < utc_now().replace(tzinfo=None):
+            order.status = "expired"
+            db.session.commit()
+
+    # Toma la config actual (CLABE/Banco/Beneficiario) desde ENV
+    try:
+        clabe, beneficiary, bank, _, _, _ = get_transfer_config()
+    except Exception as e:
+        logger.exception(f"Transfer config error: {e}")
+        return jsonify({"error": "Transfer config error"}), 500
+
+    return jsonify({
+        "order_id": order.id,
+        "user": username,
+        "status": order.status,
+        "amount_mxn": str(order.amount_mxn),
+        "currency": order.currency,
+        "reference": order.reference,
+        "beneficiary_name": beneficiary,
+        "bank_name": bank,
+        "clabe": clabe,
+        "expires_at": order.expires_at.isoformat() if order.expires_at else None,
+        "instructions": [
+            "Haz una transferencia SPEI por el monto exacto.",
+            "En 'Concepto' o 'Referencia' escribe EXACTAMENTE la referencia.",
+            "Luego envía tu clave de rastreo con /transfer-submit.",
+            "No aceptamos capturas: se valida manualmente en CEP (Banxico)."
+        ]
+    }), 200
+
+
 @app.route("/ver_vins", methods=["GET"])
 def ver_vins():
     user_name = request.args.get("user")
