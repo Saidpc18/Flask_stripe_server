@@ -1,7 +1,7 @@
 import os
 import io
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import subprocess
 
 import bcrypt
@@ -9,30 +9,26 @@ import pandas as pd
 import stripe
 
 from flask import Flask, request, jsonify, send_file, Response
-from marshmallow import Schema, fields, ValidationError
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from werkzeug.middleware.proxy_fix import ProxyFix
+from sqlalchemy import text
 
 
 # ============================
 # VERSION (para validar deploy)
 # ============================
-CODE_VERSION = os.getenv("CODE_VERSION", "v2025-12-30-railway-only")
+CODE_VERSION = os.getenv("CODE_VERSION", "railway-2025-12-31-01")
 print("CODE_VERSION:", CODE_VERSION)
-print("FILE:", __file__)
+print("RUNNING FILE:", __file__)
 
 
 # ============================
-# CONFIGURACIÓN DE LOGGING
+# LOGGING
 # ============================
 logging.basicConfig(
-    level=logging.DEBUG,  # cambia a INFO en producción
+    level=logging.INFO,  # pon DEBUG si quieres más detalle
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("app.log"),
-        logging.StreamHandler(),
-    ],
 )
 logger = logging.getLogger(__name__)
 
@@ -41,7 +37,6 @@ logger = logging.getLogger(__name__)
 # APP + PROXY FIX (Railway)
 # ============================
 app = Flask(__name__)
-# Para que request.host_url use X-Forwarded-Proto/Host (https en Railway)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 app.config["DEBUG"] = False if os.getenv("FLASK_ENV") == "production" else True
@@ -54,7 +49,7 @@ db_url = os.getenv("DATABASE_URL")
 if not db_url:
     raise ValueError("DATABASE_URL no está configurado (Railway la provee automáticamente)")
 
-# Fix común: algunas plataformas dan postgres:// y SQLAlchemy prefiere postgresql://
+# Fix común: postgres:// -> postgresql://
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
@@ -66,7 +61,7 @@ migrate = Migrate(app, db)
 
 
 # ============================
-# CONFIGURACIÓN DE STRIPE
+# STRIPE
 # ============================
 stripe.api_key = os.getenv("STRIPE_API_KEY")
 if not stripe.api_key:
@@ -76,8 +71,6 @@ webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
 if not webhook_secret:
     raise ValueError("Falta STRIPE_WEBHOOK_SECRET (whsec_...)")
 
-# Price ID (recomendado usar 1 solo STRIPE_PRICE_ID y cambiarlo al pasar a live)
-# Si quieres separar, puedes usar STRIPE_PRICE_ID_TEST / STRIPE_PRICE_ID_LIVE también.
 def get_price_id() -> str:
     mode = "test" if (stripe.api_key or "").startswith("sk_test_") else "live"
     if mode == "test":
@@ -85,9 +78,19 @@ def get_price_id() -> str:
     return os.getenv("STRIPE_PRICE_ID_LIVE") or os.getenv("STRIPE_PRICE_ID") or ""
 
 
-class StripeEventSchema(Schema):
-    type = fields.String(required=True)
-    data = fields.Dict(required=True)
+# ============================
+# UTILIDADES FECHAS (timezone-safe)
+# ============================
+def utc_now():
+    return datetime.now(timezone.utc)
+
+def to_utc_aware(dt: datetime | None):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        # si viene naive, asumimos UTC para no crashear
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 # ============================
@@ -104,7 +107,7 @@ YEAR_MAP = {
 
 
 # ============================
-# MODELOS SQLALCHEMY
+# MODELOS
 # ============================
 class User(db.Model):
     __tablename__ = "usuarios"
@@ -112,7 +115,7 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
-    license_expiration = db.Column(db.DateTime, nullable=True)
+    license_expiration = db.Column(db.DateTime, nullable=True)  # puede ser naive
     secuencial = db.Column(db.Integer, default=0)
     last_year = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=db.func.now())
@@ -164,25 +167,37 @@ class YearSequence(db.Model):
 
 
 # ============================
-# FUNCIONES AUXILIARES
+# INIT DB (evita 500 por tablas faltantes)
 # ============================
-def get_user_by_username(username):
-    return User.query.filter_by(username=username).first()
+with app.app_context():
+    try:
+        db.create_all()
+        db.session.execute(text("SELECT 1"))
+        logger.info("DB ready (create_all + SELECT 1).")
+    except Exception as e:
+        logger.exception(f"DB init failed: {e}")
 
+
+# ============================
+# HELPERS
+# ============================
+def get_user_by_username(username: str):
+    return User.query.filter_by(username=username).first()
 
 def license_is_active(user: User) -> bool:
     if not user or not user.license_expiration:
         return False
-    return user.license_expiration > datetime.now()
-
+    exp = to_utc_aware(user.license_expiration)
+    return exp is not None and exp > utc_now()
 
 def renew_license(user: User) -> bool:
     if not user:
         return False
-    user.license_expiration = datetime.now() + timedelta(days=365)
+    # guardamos naive compatible (UTC sin tz) para evitar dramas con columnas sin tz
+    new_exp = utc_now() + timedelta(days=365)
+    user.license_expiration = new_exp.replace(tzinfo=None)
     db.session.commit()
     return True
-
 
 def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
     user = get_user_by_username(username)
@@ -214,30 +229,25 @@ def obtener_o_incrementar_secuencial(username: str, year_input) -> int:
     return year_seq.secuencial
 
 
-
-CODE_VERSION = "railway-2025-12-31-01"
-print("CODE_VERSION:", CODE_VERSION)
-print("RUNNING FILE:", __file__)
-
-
 # ============================
-# RUTAS
+# RUTAS BASE
 # ============================
 @app.get("/")
 def home():
     return "Bienvenido a la API de Vinder (Railway-only)"
 
-
 @app.get("/version")
 def version():
     return {"code_version": CODE_VERSION}
-
 
 @app.get("/health")
 def health():
     return {"status": "ok", "code_version": CODE_VERSION}
 
 
+# ============================
+# AUTH
+# ============================
 @app.route("/register", methods=["POST"])
 def register():
     try:
@@ -252,23 +262,22 @@ def register():
     if not username or not password:
         return jsonify({"error": "Usuario y contraseña son requeridos."}), 400
 
-    existing = get_user_by_username(username)
-    if existing:
-        return jsonify({"error": "El usuario ya existe."}), 400
-
-    salt = bcrypt.gensalt()
-    hashed_pw = bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
-
-    new_user = User(username=username, password=hashed_pw)
-    db.session.add(new_user)
     try:
+        existing = get_user_by_username(username)
+        if existing:
+            return jsonify({"error": "El usuario ya existe."}), 400
+
+        salt = bcrypt.gensalt()
+        hashed_pw = bcrypt.hashpw(password.encode("utf-8"), salt).decode("utf-8")
+
+        new_user = User(username=username, password=hashed_pw)
+        db.session.add(new_user)
         db.session.commit()
+        return jsonify({"message": "Usuario registrado exitosamente."}), 201
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error al registrar el usuario: {e}")
+        logger.exception(f"Error al registrar el usuario: {e}")
         return jsonify({"error": "Error al registrar el usuario"}), 500
-
-    return jsonify({"message": "Usuario registrado exitosamente."}), 201
 
 
 @app.route("/login", methods=["POST"])
@@ -280,16 +289,23 @@ def login():
     if not username or not password:
         return jsonify({"error": "Usuario y contraseña son requeridos"}), 400
 
-    user = get_user_by_username(username)
-    if not user:
-        return jsonify({"error": "Usuario no encontrado"}), 404
+    try:
+        user = get_user_by_username(username)
+        if not user:
+            return jsonify({"error": "Usuario no encontrado"}), 404
 
-    if bcrypt.checkpw(password.encode("utf-8"), user.password.encode("utf-8")):
-        return jsonify({"message": "Login exitoso"}), 200
+        if bcrypt.checkpw(password.encode("utf-8"), user.password.encode("utf-8")):
+            return jsonify({"message": "Login exitoso"}), 200
 
-    return jsonify({"error": "Contraseña incorrecta"}), 401
+        return jsonify({"error": "Contraseña incorrecta"}), 401
+    except Exception as e:
+        logger.exception(f"Error en login: {e}")
+        return jsonify({"error": "Error interno"}), 500
 
 
+# ============================
+# SECUENCIAL
+# ============================
 @app.route("/obtener_secuencial", methods=["POST"])
 def obtener_secuencial():
     data = request.json or {}
@@ -303,10 +319,13 @@ def obtener_secuencial():
         nuevo_secuencial = obtener_o_incrementar_secuencial(username, year_value)
         return jsonify({"secuencial": nuevo_secuencial}), 200
     except Exception as e:
-        logger.error(f"Error al obtener secuencial: {e}")
+        logger.exception(f"Error al obtener secuencial: {e}")
         return jsonify({"error": "Error al obtener el secuencial"}), 500
 
 
+# ============================
+# STRIPE WEBHOOK
+# ============================
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
     payload = request.get_data(cache=False)
@@ -332,17 +351,17 @@ def stripe_webhook():
 
         return jsonify({"status": "success"}), 200
 
-    except ValidationError as e:
-        logger.error(f"Datos del evento inválidos: {e.messages}")
-        return jsonify({"error": "Datos del evento inválidos"}), 400
     except stripe.error.SignatureVerificationError as e:
         logger.error(f"Firma inválida del webhook: {e}")
         return jsonify({"error": "Firma del webhook inválida"}), 400
     except Exception as e:
-        logger.error(f"Error procesando webhook: {e}")
+        logger.exception(f"Error procesando webhook: {e}")
         return jsonify({"error": "Error al procesar el webhook"}), 400
 
 
+# ============================
+# STRIPE CHECKOUT
+# ============================
 @app.route("/create-checkout-session", methods=["POST"])
 def create_checkout_session():
     try:
@@ -355,17 +374,15 @@ def create_checkout_session():
         if not price_id:
             return jsonify({"error": "Falta STRIPE_PRICE_ID (o *_TEST/*_LIVE)"}), 500
 
-        mode = "test" if (stripe.api_key or "").startswith("sk_test_") else "live"
-        logger.info(f"[checkout] user={user} mode={mode} price_id={price_id}")
-
         checkout_mode = os.getenv("STRIPE_CHECKOUT_MODE", "subscription")  # subscription | payment
 
-        # Base pública (si quieres forzarla): PUBLIC_BASE_URL=https://tu-app.up.railway.app
         public_base = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
         base = public_base if public_base else request.host_url.rstrip("/")
 
         success_url = os.getenv("SUCCESS_URL", f"{base}/success")
         cancel_url = os.getenv("CANCEL_URL", f"{base}/cancel")
+
+        logger.info(f"[checkout] user={user} price_id={price_id} mode={checkout_mode}")
 
         session_obj = stripe.checkout.Session.create(
             payment_method_types=["card"],
@@ -378,29 +395,43 @@ def create_checkout_session():
 
         return jsonify({"url": session_obj.url})
     except Exception as e:
-        logger.error(f"Error al crear la sesión de pago: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.exception(f"Error al crear la sesión de pago: {e}")
+        return jsonify({"error": "Stripe error"}), 500
 
 
 @app.route("/success", methods=["GET"])
 def success():
     return "¡Pago exitoso! Gracias por tu compra."
 
-
 @app.route("/cancel", methods=["GET"])
 def cancel():
     return "El proceso de pago ha sido cancelado o ha fallado."
 
 
+# ============================
+# ENDPOINT PROTEGIDO (ARREGLADO)
+# ============================
 @app.route("/funcion-principal", methods=["GET"])
 def funcion_principal():
     usuario = request.args.get("user")
-    user = get_user_by_username(usuario)
+    if not usuario:
+        return jsonify({"error": "Falta ?user=..."}), 400
+
+    try:
+        user = get_user_by_username(usuario)
+    except Exception as e:
+        logger.exception(f"DB error buscando usuario {usuario}: {e}")
+        return jsonify({"error": "Error consultando la base de datos"}), 500
+
     if not license_is_active(user):
         return jsonify({"error": "Licencia expirada o usuario inexistente. Renueva para continuar."}), 403
-    return jsonify({"message": "Acceso permitido a la función principal."})
+
+    return jsonify({"message": "Acceso permitido a la función principal."}), 200
 
 
+# ============================
+# VINS
+# ============================
 @app.route("/guardar_vin", methods=["POST"])
 def guardar_vin_endpoint():
     data = request.json or {}
@@ -410,19 +441,19 @@ def guardar_vin_endpoint():
     if not user_name or not vin_completo:
         return jsonify({"error": "Faltan datos necesarios (user, vin_completo)"}), 400
 
-    user = get_user_by_username(user_name)
-    if not user:
-        return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
-
     try:
+        user = get_user_by_username(user_name)
+        if not user:
+            return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
+
         nuevo_vin = VIN(user_id=user.id, vin_completo=vin_completo)
         db.session.add(nuevo_vin)
         db.session.commit()
         return jsonify({"message": "VIN guardado exitosamente"}), 200
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error al guardar VIN: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.exception(f"Error al guardar VIN: {e}")
+        return jsonify({"error": "Error al guardar VIN"}), 500
 
 
 @app.route("/ver_vins", methods=["GET"])
@@ -431,11 +462,11 @@ def ver_vins():
     if not user_name:
         return jsonify({"error": "Usuario no especificado"}), 400
 
-    user = get_user_by_username(user_name)
-    if not user:
-        return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
-
     try:
+        user = get_user_by_username(user_name)
+        if not user:
+            return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
+
         vins = user.vins
         resultado = [
             {
@@ -446,8 +477,8 @@ def ver_vins():
         ]
         return jsonify({"vins": resultado}), 200
     except Exception as e:
-        logger.error(f"Error al listar VINs: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.exception(f"Error al listar VINs: {e}")
+        return jsonify({"error": "Error al listar VINs"}), 500
 
 
 @app.route("/export_vins", methods=["GET"])
@@ -456,11 +487,11 @@ def export_vins():
     if not user_name:
         return jsonify({"error": "Se requiere el parámetro 'user'"}), 400
 
-    user = get_user_by_username(user_name)
-    if not user:
-        return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
-
     try:
+        user = get_user_by_username(user_name)
+        if not user:
+            return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
+
         data = [
             {"VIN": vin.vin_completo, "Fecha de Creación": vin.created_at.strftime("%Y-%m-%d %H:%M:%S")}
             for vin in user.vins
@@ -479,8 +510,8 @@ def export_vins():
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
     except Exception as e:
-        logger.error(f"Error al exportar VINs: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.exception(f"Error al exportar VINs: {e}")
+        return jsonify({"error": "Error al exportar VINs"}), 500
 
 
 @app.route("/eliminar_todos_vins", methods=["POST"])
@@ -490,19 +521,19 @@ def eliminar_todos_vins():
     if not user_name:
         return jsonify({"error": "Se requiere el usuario."}), 400
 
-    user = get_user_by_username(user_name)
-    if not user:
-        return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
-
     try:
+        user = get_user_by_username(user_name)
+        if not user:
+            return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
+
         VIN.query.filter_by(user_id=user.id).delete()
         YearSequence.query.filter_by(user_id=user.id).delete()
         db.session.commit()
         return jsonify({"message": "Todos los VINs han sido eliminados y el secuencial se ha reiniciado."}), 200
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error al eliminar todos los VINs: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.exception(f"Error al eliminar todos los VINs: {e}")
+        return jsonify({"error": "Error al eliminar VINs"}), 500
 
 
 @app.route("/eliminar_ultimo_vin", methods=["POST"])
@@ -512,11 +543,11 @@ def eliminar_ultimo_vin():
     if not user_name:
         return jsonify({"error": "Se requiere el usuario."}), 400
 
-    user = get_user_by_username(user_name)
-    if not user:
-        return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
-
     try:
+        user = get_user_by_username(user_name)
+        if not user:
+            return jsonify({"error": f"Usuario '{user_name}' no existe"}), 404
+
         ultimo_vin = VIN.query.filter_by(user_id=user.id).order_by(VIN.created_at.desc()).first()
         if not ultimo_vin:
             return jsonify({"error": "No hay VINs para eliminar."}), 404
@@ -529,9 +560,7 @@ def eliminar_ultimo_vin():
         if year_letter not in YEAR_MAP:
             if len(vin_str) > 8 and vin_str[8] in YEAR_MAP:
                 year_letter = vin_str[8]
-                logger.warning(
-                    f"El VIN {vin_str} tenía el código de año en pos 9 (idx 8). Se usará '{year_letter}'."
-                )
+                logger.warning(f"El VIN {vin_str} tenía el código de año en pos 9 (idx 8). Se usará '{year_letter}'.")
             else:
                 return jsonify({"error": "El VIN no contiene un código de año válido."}), 500
 
@@ -546,10 +575,13 @@ def eliminar_ultimo_vin():
         return jsonify({"message": "El último VIN ha sido eliminado y el secuencial se ha actualizado."}), 200
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error al eliminar el último VIN: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.exception(f"Error al eliminar el último VIN: {e}")
+        return jsonify({"error": "Error al eliminar el último VIN"}), 500
 
 
+# ============================
+# TUFUP (solo si lo usas)
+# ============================
 @app.route("/check_updates", methods=["GET"])
 def check_updates():
     def generate():
