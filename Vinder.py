@@ -49,7 +49,7 @@ def safe_json(resp: requests.Response) -> dict:
 
 
 # ============================
-# PERSISTENCIA LOCAL (último order_id por usuario)
+# PERSISTENCIA LOCAL (state)
 # ============================
 STATE_PATH = os.path.join(os.path.expanduser("~"), ".vinder_state.json")
 
@@ -72,6 +72,17 @@ def save_state(state: dict) -> None:
         logger.warning(f"No se pudo guardar state: {e}")
 
 
+def save_last_user(username: str) -> None:
+    st = load_state()
+    st["last_user"] = username
+    save_state(st)
+
+
+def load_last_user() -> str:
+    st = load_state()
+    return (st.get("last_user") or "").strip()
+
+
 # ============================
 # UTILIDADES UI/THREAD
 # ============================
@@ -80,6 +91,7 @@ def run_bg(master: tb.Window, fn, on_ok=None, on_err=None):
     Ejecuta fn() en hilo para no congelar UI.
     on_ok(result) y on_err(exception) corren en el hilo principal.
     """
+
     def worker():
         try:
             res = fn()
@@ -234,8 +246,23 @@ class VinderApp:
         self.result_label = None
         self.status_label = None
 
-        # Estado licencia (UI)
-        self.license_status_var = tb.StringVar(value="Estado de licencia: (sin verificar)")
+        # Frames (para evitar AttributeError)
+        self.left_frame = None
+        self.right_frame = None
+
+        # Notificaciones (banner interno)
+        self.toast_var = tb.StringVar(value="")
+        self.toast_style = "secondary"
+
+        # Licencia (badge + detalle)
+        self.license_badge_var = tb.StringVar(value="LICENCIA: —")
+        self.license_detail_var = tb.StringVar(value="")
+        self.license_badge_label = None
+
+        # Detalle de conversión (solo en ventana principal)
+        self.conversion_frame = None
+        self.conversion_text = None
+        self.status_label = None  # (compatibilidad: por si existía el label viejo)
 
         # Catálogos
         self.var_wmi = tb.StringVar(value="3J9")
@@ -273,6 +300,24 @@ class VinderApp:
             self.logo_photo_large = None
 
     # ----------------------------
+    # NOTIFICATIONS
+    # ----------------------------
+    def show_toast(self, text: str, style: str = "secondary", ms: int = 4500):
+        self.toast_var.set(text)
+        self.toast_style = style
+        if hasattr(self, "toast_label") and self.toast_label is not None:
+            try:
+                self.toast_label.configure(bootstyle=style)
+            except Exception:
+                pass
+
+        def clear():
+            self.toast_var.set("")
+
+        if ms > 0:
+            self.master.after(ms, clear)
+
+    # ----------------------------
     # HELPERS API
     # ----------------------------
     def _require_user(self) -> bool:
@@ -281,51 +326,52 @@ class VinderApp:
             return False
         return True
 
+    def _set_license_badge(self, active: bool, exp_text: str = ""):
+        if active:
+            self.license_badge_var.set("LICENCIA: ACTIVA")
+            self.license_detail_var.set(f"Expira: {exp_text}" if exp_text else "")
+            if self.license_badge_label:
+                self.license_badge_label.configure(bootstyle="success")
+        else:
+            self.license_badge_var.set("LICENCIA: EXPIRADA")
+            self.license_detail_var.set("")
+            if self.license_badge_label:
+                self.license_badge_label.configure(bootstyle="danger")
+
     def refresh_license_status(self):
-        """
-        Intenta /license-status (si existe). Si no existe (404), hace fallback a /funcion-principal.
-        """
         if not self._require_user():
             return
 
         def job():
-            # 1) try /license-status
             url1 = api_url("/license-status")
             resp1 = requests.get(url1, params={"user": self.usuario_actual}, timeout=HTTP_TIMEOUT)
             if resp1.status_code == 200:
                 return {"mode": "license-status", "data": safe_json(resp1)}
 
-            # si no existe, fallback
             if resp1.status_code == 404:
                 url2 = api_url("/funcion-principal")
                 resp2 = requests.get(url2, params={"user": self.usuario_actual}, timeout=HTTP_TIMEOUT)
                 d2 = safe_json(resp2)
                 return {"mode": "funcion-principal", "status": resp2.status_code, "data": d2}
 
-            # otros errores
             d1 = safe_json(resp1)
             err = d1.get("error", f"HTTP {resp1.status_code}")
             raise RuntimeError(f"No se pudo consultar licencia: {err}")
 
         def ok(payload):
             mode = payload.get("mode")
+
             if mode == "license-status":
                 data = payload.get("data", {})
-                active = data.get("active", False)
-                exp = data.get("license_expiration_utc") or data.get("license_expiration_raw")
-                if active:
-                    self.license_status_var.set(f"Estado de licencia: ACTIVA (expira: {exp})")
-                else:
-                    self.license_status_var.set("Estado de licencia: EXPIRADA / INACTIVA")
+                active = bool(data.get("active", False))
+                exp = data.get("license_expiration_utc") or data.get("license_expiration_raw") or ""
+                self._set_license_badge(active, exp_text=exp)
                 return
 
-            # fallback /funcion-principal
             status = payload.get("status", 0)
             data = payload.get("data", {})
-            if status == 200 and "message" in data:
-                self.license_status_var.set("Estado de licencia: ACTIVA")
-            else:
-                self.license_status_var.set("Estado de licencia: EXPIRADA / INACTIVA")
+            active = bool(status == 200 and "message" in data)
+            self._set_license_badge(active)
 
         run_bg(self.master, job, on_ok=ok, on_err=lambda e: messagebox.showerror("Licencia", str(e)))
 
@@ -370,237 +416,13 @@ class VinderApp:
 
         def ok(url_pago: str):
             webbrowser.open(url_pago)
-            messagebox.showinfo("Pago Iniciado", "Se abrió Stripe en tu navegador.")
+            self.show_toast("Stripe abierto en tu navegador.", style="success")
             self.refresh_license_status()
 
         run_bg(self.master, job, on_ok=ok, on_err=lambda e: messagebox.showerror("Stripe", str(e)))
 
     # ----------------------------
-    # TRANSFERENCIA SPEI
-    # ----------------------------
-    def _load_last_order_id(self):
-        if not self.usuario_actual:
-            return None
-        st = load_state()
-        return st.get("transfer_orders", {}).get(self.usuario_actual)
-
-    def _save_last_order_id(self, order_id: str):
-        if not self.usuario_actual:
-            return
-        st = load_state()
-        st.setdefault("transfer_orders", {})
-        st["transfer_orders"][self.usuario_actual] = order_id
-        save_state(st)
-
-    def _apply_transfer_ui(self, ui, data: dict):
-        ui["status_var"].set(data.get("status", ""))
-        ui["amount_var"].set(str(data.get("amount_mxn", "")))
-        ui["ref_var"].set(data.get("reference", ""))
-        ui["clabe_var"].set(data.get("clabe", ""))
-        ui["bank_var"].set(data.get("bank_name", ""))
-        ui["benef_var"].set(data.get("beneficiary_name", ""))
-        ui["expires_var"].set(data.get("expires_at", ""))
-
-        instructions = data.get("instructions", [])
-        ui["instructions_box"].configure(state="normal")
-        ui["instructions_box"].delete("1.0", "end")
-        ui["instructions_box"].insert("end", "\n".join(instructions))
-        ui["instructions_box"].configure(state="disabled")
-
-    def stop_transfer_polling(self, ui):
-        after_id = ui.get("_poll_after_id")
-        if after_id:
-            try:
-                self.master.after_cancel(after_id)
-            except Exception:
-                pass
-        ui["_poll_after_id"] = None
-
-    def start_transfer_polling(self, ui, interval_ms=10000, max_minutes=30, notify_popup=True):
-        """
-        Polling a /transfer-instructions hasta:
-          - status == confirmed (refresca licencia + popup opcional)
-          - status in (expired, rejected)
-          - deadline
-        """
-        if not self._require_user():
-            return
-
-        self.stop_transfer_polling(ui)
-        ui["_poll_deadline"] = time.monotonic() + max_minutes * 60
-
-        # si notify_popup=False, evitamos popup aunque llegue confirmed
-        if not notify_popup:
-            ui["_confirmed_notified"] = True
-        else:
-            ui.setdefault("_confirmed_notified", False)
-
-        def tick():
-            win = ui.get("_window")
-            if win is None or not win.winfo_exists():
-                self.stop_transfer_polling(ui)
-                return
-
-            order_id = ui["order_id_var"].get().strip()
-            if not order_id:
-                self.stop_transfer_polling(ui)
-                return
-
-            def job():
-                resp = requests.get(
-                    api_url("/transfer-instructions"),
-                    params={"order_id": order_id, "user": self.usuario_actual},
-                    timeout=HTTP_TIMEOUT,
-                )
-                data = safe_json(resp)
-                if resp.status_code != 200:
-                    err = data.get("error", f"HTTP {resp.status_code}")
-                    raise RuntimeError(err)
-                return data
-
-            def ok(data):
-                self._apply_transfer_ui(ui, data)
-                st = (data.get("status") or "").lower()
-
-                if st == "confirmed":
-                    self.refresh_license_status()
-                    if not ui.get("_confirmed_notified", False):
-                        ui["_confirmed_notified"] = True
-                        messagebox.showinfo("Transferencia confirmada", "Pago confirmado. Tu licencia ya está activa.")
-                    self.stop_transfer_polling(ui)
-                    return
-
-                if st in ("expired", "rejected"):
-                    self.stop_transfer_polling(ui)
-                    return
-
-                if time.monotonic() < ui.get("_poll_deadline", 0):
-                    ui["_poll_after_id"] = self.master.after(interval_ms, tick)
-                else:
-                    self.stop_transfer_polling(ui)
-
-            def err(_e: Exception):
-                # errores transitorios: seguimos hasta deadline
-                if time.monotonic() < ui.get("_poll_deadline", 0):
-                    ui["_poll_after_id"] = self.master.after(interval_ms, tick)
-                else:
-                    self.stop_transfer_polling(ui)
-
-            run_bg(self.master, job, on_ok=ok, on_err=err)
-
-        ui["_poll_after_id"] = self.master.after(1000, tick)
-
-    def crear_orden_transferencia(self, ui):
-        if not self._require_user():
-            return
-
-        def job():
-            resp = requests.post(
-                api_url("/create-transfer-order"),
-                json={"user": self.usuario_actual},
-                timeout=HTTP_TIMEOUT,
-            )
-            data = safe_json(resp)
-            if resp.status_code not in (200, 201):
-                err = data.get("error", f"HTTP {resp.status_code}")
-                raise RuntimeError(err)
-            return data
-
-        def ok(data):
-            # reinicia polling (por si venía de otra orden)
-            self.stop_transfer_polling(ui)
-            ui["_confirmed_notified"] = False
-
-            self.last_order_id = data.get("order_id")
-            if self.last_order_id:
-                self._save_last_order_id(self.last_order_id)
-
-            ui["order_id_var"].set(data.get("order_id", ""))
-            ui["amount_var"].set(str(data.get("amount_mxn", "")))
-            ui["ref_var"].set(data.get("reference", ""))
-            ui["clabe_var"].set(data.get("clabe", ""))
-            ui["bank_var"].set(data.get("bank_name", ""))
-            ui["benef_var"].set(data.get("beneficiary_name", ""))
-            ui["expires_var"].set(data.get("expires_at", ""))
-            ui["status_var"].set(data.get("status", "pending"))
-
-            instructions = data.get("instructions", [])
-            ui["instructions_box"].configure(state="normal")
-            ui["instructions_box"].delete("1.0", "end")
-            ui["instructions_box"].insert("end", "\n".join(instructions))
-            ui["instructions_box"].configure(state="disabled")
-
-            messagebox.showinfo("Transferencia", "Orden SPEI creada. Copia monto + referencia y realiza tu SPEI.")
-
-        run_bg(self.master, job, on_ok=ok, on_err=lambda e: messagebox.showerror("Transferencia", str(e)))
-
-    def actualizar_instrucciones_transferencia(self, ui):
-        if not self._require_user():
-            return
-
-        order_id = ui["order_id_var"].get().strip()
-        if not order_id:
-            messagebox.showerror("Transferencia", "Primero crea una orden (order_id vacío).")
-            return
-
-        def job():
-            resp = requests.get(
-                api_url("/transfer-instructions"),
-                params={"order_id": order_id, "user": self.usuario_actual},
-                timeout=HTTP_TIMEOUT,
-            )
-            data = safe_json(resp)
-            if resp.status_code != 200:
-                err = data.get("error", f"HTTP {resp.status_code}")
-                raise RuntimeError(err)
-            return data
-
-        def ok(data):
-            self._apply_transfer_ui(ui, data)
-
-            st = (data.get("status") or "").lower()
-            if st == "confirmed":
-                self.refresh_license_status()
-
-            # si ya está submitted y no hay polling activo, arráncalo
-            if st == "submitted" and not ui.get("_poll_after_id"):
-                self.start_transfer_polling(ui, interval_ms=10000, max_minutes=30, notify_popup=True)
-
-        run_bg(self.master, job, on_ok=ok, on_err=lambda e: messagebox.showerror("Transferencia", str(e)))
-
-    def enviar_tracking_key(self, ui):
-        if not self._require_user():
-            return
-
-        order_id = ui["order_id_var"].get().strip()
-        tracking_key = ui["tracking_var"].get().strip()
-        if not order_id or not tracking_key:
-            messagebox.showerror("Transferencia", "Falta order_id o tracking_key.")
-            return
-
-        def job():
-            resp = requests.post(
-                api_url("/transfer-submit"),
-                json={"order_id": order_id, "tracking_key": tracking_key},
-                timeout=HTTP_TIMEOUT,
-            )
-            data = safe_json(resp)
-            if resp.status_code != 200:
-                err = data.get("error", f"HTTP {resp.status_code}")
-                raise RuntimeError(err)
-            return data
-
-        def ok(data):
-            ui["status_var"].set(data.get("status", "submitted"))
-            messagebox.showinfo("Transferencia", "Tracking recibido. Se validará manualmente en CEP.")
-            self.actualizar_instrucciones_transferencia(ui)
-            # ✅ POLLING AUTOMÁTICO para detectar confirmación
-            self.start_transfer_polling(ui, interval_ms=10000, max_minutes=30, notify_popup=True)
-
-        run_bg(self.master, job, on_ok=ok, on_err=lambda e: messagebox.showerror("Transferencia", str(e)))
-
-    # ----------------------------
-    # VINs
+    # VINs (Flask)
     # ----------------------------
     def guardar_vin_en_flask(self, vin_data: dict):
         if not self._require_user():
@@ -611,7 +433,7 @@ class VinderApp:
         try:
             resp = requests.post(url, json=payload, timeout=HTTP_TIMEOUT)
             if resp.status_code == 200:
-                messagebox.showinfo("Éxito", "VIN guardado en PostgreSQL.")
+                self.show_toast("VIN guardado en PostgreSQL.", style="success")
             else:
                 data = safe_json(resp)
                 err = data.get("error", f"HTTP {resp.status_code}")
@@ -672,7 +494,7 @@ class VinderApp:
                 if filename:
                     with open(filename, "wb") as f:
                         f.write(response.content)
-                    messagebox.showinfo("Éxito", f"Archivo exportado: {filename}")
+                    self.show_toast("Archivo exportado correctamente.", style="success")
             else:
                 data = safe_json(response)
                 err = data.get("error", f"HTTP {response.status_code}")
@@ -692,7 +514,7 @@ class VinderApp:
             url = api_url("/eliminar_todos_vins")
             resp = requests.post(url, json={"user": self.usuario_actual}, timeout=HTTP_TIMEOUT)
             if resp.status_code == 200:
-                messagebox.showinfo("Éxito", "VINs eliminados y secuencial reiniciado.")
+                self.show_toast("VINs eliminados y secuencial reiniciado.", style="warning")
             else:
                 data = safe_json(resp)
                 err = data.get("error", f"HTTP {resp.status_code}")
@@ -709,10 +531,10 @@ class VinderApp:
             return
 
         try:
-            url = api_url("/eliminar_ultimo_vin")
+            url = api_url("/eliminar_ultimo_vins")
             resp = requests.post(url, json={"user": self.usuario_actual}, timeout=HTTP_TIMEOUT)
             if resp.status_code == 200:
-                messagebox.showinfo("Éxito", "Último VIN eliminado.")
+                self.show_toast("Último VIN eliminado.", style="warning")
             else:
                 data = safe_json(resp)
                 err = data.get("error", f"HTTP {resp.status_code}")
@@ -727,6 +549,21 @@ class VinderApp:
         for w in self.main_frame.winfo_children():
             w.destroy()
 
+        # Limpieza de widgets sueltos (por si existía el label viejo de conversion)
+        try:
+            if getattr(self, "status_label", None) is not None:
+                self.status_label.destroy()
+        except Exception:
+            pass
+        self.status_label = None
+
+        # Reset de referencias UI
+        self.left_frame = None
+        self.right_frame = None
+        self.result_label = None
+        self.conversion_frame = None
+        self.conversion_text = None
+
     def mostrar_ventana_inicio(self):
         self.limpiar_main_frame()
         container = tb.Frame(self.main_frame, padding=40)
@@ -735,13 +572,13 @@ class VinderApp:
         if self.logo_photo_large is not None:
             tb.Label(container, image=self.logo_photo_large).pack(pady=10)
 
-        tb.Label(container, text="Bienvenido a Vinder", font=("Helvetica", 22, "bold")).pack(pady=20)
+        tb.Label(container, text="Bienvenido a Vinder", font=("Helvetica", 22, "bold")).pack(pady=18)
 
         tb.Button(container, text="Crear Cuenta", bootstyle=PRIMARY, command=self.ventana_crear_cuenta).pack(
-            pady=10, ipadx=10
+            pady=8, ipadx=16, ipady=4
         )
         tb.Button(container, text="Iniciar Sesión", bootstyle=INFO, command=self.ventana_iniciar_sesion).pack(
-            pady=10, ipadx=10
+            pady=8, ipadx=16, ipady=4
         )
 
     def ventana_crear_cuenta(self):
@@ -754,37 +591,94 @@ class VinderApp:
 
         tb.Label(container, text="Crear Cuenta", font=("Helvetica", 20, "bold")).pack(pady=10)
 
-        tb.Label(container, text="Usuario:", font=("Helvetica", 14)).pack(pady=5)
-        entry_reg_user = tb.Entry(container, font=("Helvetica", 14), width=25)
+        def password_ok(p: str):
+            if len(p) < 8:
+                return False, "La contraseña debe tener al menos 8 caracteres."
+            has_letter = any(c.isalpha() for c in p)
+            has_digit = any(c.isdigit() for c in p)
+            if not (has_letter and has_digit):
+                return False, "La contraseña debe incluir al menos una letra y un número."
+            return True, ""
+
+        def set_pw_visibility():
+            show = "" if show_pw_var.get() else "*"
+            entry_reg_pass.configure(show=show)
+            entry_reg_pass2.configure(show=show)
+
+        tb.Label(container, text="Usuario:", font=("Helvetica", 14)).pack(pady=(10, 5))
+        entry_reg_user = tb.Entry(container, font=("Helvetica", 14), width=28)
         entry_reg_user.pack()
 
-        tb.Label(container, text="Contraseña:", font=("Helvetica", 14)).pack(pady=5)
-        entry_reg_pass = tb.Entry(container, show="*", font=("Helvetica", 14), width=25)
+        tb.Label(container, text="Contraseña:", font=("Helvetica", 14)).pack(pady=(12, 5))
+        entry_reg_pass = tb.Entry(container, show="*", font=("Helvetica", 14), width=28)
         entry_reg_pass.pack()
+
+        tb.Label(container, text="Confirmar contraseña:", font=("Helvetica", 14)).pack(pady=(12, 5))
+        entry_reg_pass2 = tb.Entry(container, show="*", font=("Helvetica", 14), width=28)
+        entry_reg_pass2.pack()
+
+        show_pw_var = tb.BooleanVar(value=False)
+        tb.Checkbutton(
+            container,
+            text="Mostrar contraseñas",
+            variable=show_pw_var,
+            command=set_pw_visibility,
+            bootstyle="secondary",
+        ).pack(pady=(8, 0))
+
+        btn_registrar = tb.Button(container, text="Registrar", bootstyle=SUCCESS)
+        btn_registrar.pack(pady=14, ipadx=12, ipady=4)
 
         def do_register():
             username = entry_reg_user.get().strip()
             password = entry_reg_pass.get().strip()
-            if not username or not password:
+            password2 = entry_reg_pass2.get().strip()
+
+            if not username or not password or not password2:
                 messagebox.showerror("Error", "Completa todos los campos.")
                 return
 
+            if password != password2:
+                messagebox.showerror("Error", "Las contraseñas no coinciden.")
+                return
+
+            ok, msg = password_ok(password)
+            if not ok:
+                messagebox.showerror("Error", msg)
+                return
+
+            btn_registrar.configure(state="disabled", text="Registrando…")
             register_url = api_url("/register")
-            try:
-                response = requests.post(register_url, json={"username": username, "password": password}, timeout=HTTP_TIMEOUT)
-                if response.status_code == 201:
-                    messagebox.showinfo("Éxito", "Cuenta creada. Ahora inicia sesión.")
+
+            def job():
+                r = requests.post(
+                    register_url,
+                    json={"username": username, "password": password},
+                    timeout=HTTP_TIMEOUT
+                )
+                return r.status_code, safe_json(r)
+
+            def on_ok(result):
+                btn_registrar.configure(state="normal", text="Registrar")
+                status, data = result
+                if status == 201:
+                    self.show_toast("Cuenta creada. Inicia sesión.", style="success")
+                    save_last_user(username)
                     self.mostrar_ventana_inicio()
                 else:
-                    data = safe_json(response)
-                    err = data.get("error", f"HTTP {response.status_code}")
+                    err = data.get("error", f"HTTP {status}")
                     messagebox.showerror("Error", f"Registro fallido: {err}")
-            except requests.RequestException as e:
+
+            def on_err(e):
+                btn_registrar.configure(state="normal", text="Registrar")
                 messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
 
-        tb.Button(container, text="Registrar", bootstyle=SUCCESS, command=do_register).pack(pady=10, ipadx=10)
+            run_bg(self.master, job, on_ok=on_ok, on_err=on_err)
+
+        btn_registrar.configure(command=do_register)
+
         tb.Button(container, text="Volver", bootstyle=SECONDARY, command=self.mostrar_ventana_inicio).pack(
-            pady=5, ipadx=10
+            pady=5, ipadx=12, ipady=3
         )
 
     def ventana_iniciar_sesion(self):
@@ -797,13 +691,27 @@ class VinderApp:
 
         tb.Label(container, text="Iniciar Sesión", font=("Helvetica", 20, "bold")).pack(pady=10)
 
-        tb.Label(container, text="Usuario:", font=("Helvetica", 14)).pack(pady=5)
-        entry_user = tb.Entry(container, font=("Helvetica", 14), width=25)
+        tb.Label(container, text="Usuario:", font=("Helvetica", 14)).pack(pady=(10, 5))
+        entry_user = tb.Entry(container, font=("Helvetica", 14), width=28)
         entry_user.pack()
 
-        tb.Label(container, text="Contraseña:", font=("Helvetica", 14)).pack(pady=5)
-        entry_pass = tb.Entry(container, show="*", font=("Helvetica", 14), width=25)
+        last = load_last_user()
+        if last:
+            entry_user.insert(0, last)
+
+        tb.Label(container, text="Contraseña:", font=("Helvetica", 14)).pack(pady=(12, 5))
+        entry_pass = tb.Entry(container, show="*", font=("Helvetica", 14), width=28)
         entry_pass.pack()
+
+        show_pw = tb.BooleanVar(value=False)
+
+        def toggle_pw():
+            entry_pass.configure(show="" if show_pw.get() else "*")
+
+        tb.Checkbutton(container, text="Mostrar contraseña", variable=show_pw, command=toggle_pw, bootstyle="secondary").pack(pady=(6, 0))
+
+        btn_login = tb.Button(container, text="Iniciar Sesión", bootstyle=PRIMARY)
+        btn_login.pack(pady=14, ipadx=14, ipady=4)
 
         def do_login():
             user = entry_user.get().strip()
@@ -812,74 +720,133 @@ class VinderApp:
                 messagebox.showerror("Error", "Completa todos los campos.")
                 return
 
+            btn_login.configure(state="disabled", text="Entrando…")
             login_url = api_url("/login")
-            try:
+
+            def job():
                 response = requests.post(login_url, json={"username": user, "password": pw}, timeout=HTTP_TIMEOUT)
-                if response.status_code == 200:
-                    self.usuario_actual = user
-                    messagebox.showinfo("Éxito", f"Bienvenido, {user}")
+                return response.status_code, safe_json(response), user
+
+            def on_ok(result):
+                status, data, user_ = result
+                btn_login.configure(state="normal", text="Iniciar Sesión")
+
+                if status == 200:
+                    self.usuario_actual = user_
+                    save_last_user(user_)
+                    self.show_toast(f"Bienvenido, {user_}", style="success")
                     self.ventana_principal()
                     self.refresh_license_status()
                 else:
-                    data = safe_json(response)
-                    err = data.get("error", f"HTTP {response.status_code}")
+                    err = data.get("error", f"HTTP {status}")
                     messagebox.showerror("Error", f"Login fallido: {err}")
-            except requests.RequestException as e:
+
+            def on_err(e):
+                btn_login.configure(state="normal", text="Iniciar Sesión")
                 messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
 
-        tb.Button(container, text="Iniciar Sesión", bootstyle=PRIMARY, command=do_login).pack(pady=10, ipadx=10)
+            run_bg(self.master, job, on_ok=on_ok, on_err=on_err)
+
+        btn_login.configure(command=do_login)
+
         tb.Button(container, text="Volver", bootstyle=SECONDARY, command=self.mostrar_ventana_inicio).pack(
-            pady=5, ipadx=10
+            pady=5, ipadx=12, ipady=3
         )
 
     def ventana_principal(self):
         self.limpiar_main_frame()
 
+        # TOP BAR
         top = tb.Frame(self.main_frame, padding=10)
         top.pack(fill="x")
 
-        tb.Label(top, text=f"Hola, {self.usuario_actual}", font=("Helvetica", 16, "bold")).pack(side="left")
-        tb.Label(top, textvariable=self.license_status_var, font=("Helvetica", 11)).pack(side="left", padx=20)
-        tb.Button(top, text="Refrescar licencia", bootstyle=SECONDARY, command=self.refresh_license_status).pack(side="left")
+        if self.logo_photo_small is not None:
+            tb.Label(top, image=self.logo_photo_small).pack(side="left", padx=(0, 8))
 
+        tb.Label(top, text="Vinder", font=("Helvetica", 18, "bold")).pack(side="left")
+        tb.Label(top, text=f" | Usuario: {self.usuario_actual}", font=("Helvetica", 11)).pack(side="left", padx=8)
+
+        self.license_badge_label = tb.Label(
+            top,
+            textvariable=self.license_badge_var,
+            bootstyle="secondary",
+            font=("Helvetica", 10, "bold"),
+            padding=(10, 4),
+        )
+        self.license_badge_label.pack(side="left", padx=10)
+        tb.Label(top, textvariable=self.license_detail_var, font=("Helvetica", 10)).pack(side="left")
+
+        tb.Button(top, text="Refrescar licencia", bootstyle=SECONDARY, command=self.refresh_license_status).pack(side="right")
+
+        # NOTIFICATION BANNER
+        self.toast_label = tb.Label(self.main_frame, textvariable=self.toast_var, bootstyle="secondary", anchor="center")
+        self.toast_label.pack(fill="x", pady=(6, 10))
+
+        # BODY (3 columnas: izquierda / centro / acciones)
         body = tb.Frame(self.main_frame, padding=10)
         body.pack(fill="both", expand=True)
 
-        self.left_frame = tb.Frame(body, padding=20)
-        self.left_frame.pack(side="left", fill="both", expand=True)
+        body.columnconfigure(0, weight=3, uniform="cols")
+        body.columnconfigure(1, weight=3, uniform="cols")
+        body.columnconfigure(2, weight=2, uniform="cols")
+        body.rowconfigure(0, weight=1)
 
-        self.right_frame = tb.Frame(body, padding=20)
-        self.right_frame.pack(side="right", fill="both", expand=True)
+        left = tb.Labelframe(body, text="Generar VIN", padding=16)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
 
-        tb.Label(self.left_frame, text="Generar VIN", font=("Helvetica", 14, "underline")).pack(pady=5)
-        tb.Label(self.left_frame, text="Código WMI:", font=("Helvetica", 12)).pack()
-        tb.Entry(self.left_frame, textvariable=self.var_wmi, font=("Helvetica", 12), width=10).pack()
-        self.crear_optionmenus(self.left_frame)
+        center = tb.Labelframe(body, text="Detalle de conversión (pos.9)", padding=16)
+        center.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
 
-        tb.Button(self.right_frame, text="Generar VIN", bootstyle=PRIMARY, command=self.generar_vin).pack(pady=10, ipadx=5)
+        right = tb.Labelframe(body, text="Acciones", padding=16)
+        right.grid(row=0, column=2, sticky="nsew")
 
-        self.result_label = tb.Label(self.right_frame, text="VIN/NIV: ", font=("Helvetica", 12))
-        self.result_label.pack(pady=5)
+        self.left_frame = left
+        self.right_frame = right
+        self.conversion_frame = center
 
-        tb.Button(self.right_frame, text="Renovar Licencia", bootstyle=SUCCESS, command=self.ventana_renovar_licencia).pack(
-            pady=10, ipadx=5
-        )
-        tb.Button(self.right_frame, text="Ver VINs Generados", bootstyle=INFO, command=self.ventana_lista_vins).pack(
-            pady=5, ipadx=5
-        )
-        tb.Button(self.right_frame, text="Exportar VINs a Excel", bootstyle=INFO, command=self.exportar_vins).pack(
-            pady=5, ipadx=5
-        )
-        tb.Button(self.right_frame, text="Eliminar TODOS los VINs", bootstyle=WARNING, command=self.eliminar_todos_vins).pack(
-            pady=5, ipadx=5
-        )
-        tb.Button(self.right_frame, text="Eliminar ÚLTIMO VIN", bootstyle=WARNING, command=self.eliminar_ultimo_vin).pack(
-            pady=5, ipadx=5
-        )
-        tb.Button(self.right_frame, text="Buscar actualizaciones", bootstyle=SECONDARY, command=check_for_updates).pack(
-            pady=10, ipadx=5
-        )
-        tb.Button(self.right_frame, text="Cerrar Sesión", bootstyle=DANGER, command=self.cerrar_sesion).pack(pady=10, ipadx=5)
+        # --- Columna izquierda ---
+        tb.Label(left, text="Código WMI:", font=("Helvetica", 12)).pack(anchor="w")
+        tb.Entry(left, textvariable=self.var_wmi, font=("Helvetica", 12), width=12).pack(anchor="w", pady=(0, 10))
+
+        self.crear_optionmenus(left)
+
+        tb.Separator(left).pack(fill="x", pady=12)
+
+        self.result_label = tb.Label(left, text="VIN/NIV: —", font=("Helvetica", 16, "bold"))
+        self.result_label.pack(anchor="w", pady=(8, 4))
+
+        # --- Columna central (detalle) ---
+        tb.Label(
+            center,
+            text="Aquí verás el detalle del cálculo del dígito verificador (pos.9) cuando generes un VIN.",
+            font=("Helvetica", 10),
+            wraplength=500,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 8))
+
+        self.conversion_text = ScrolledText(center, wrap="word", font=("Helvetica", 10), height=22)
+        self.conversion_text.pack(fill="both", expand=True)
+        self.conversion_text.insert("end", "Genera un VIN para ver el detalle aquí.")
+        self.conversion_text.configure(state="disabled")
+
+        # --- Acciones ---
+        tb.Button(
+            right,
+            text="Generar VIN",
+            bootstyle=PRIMARY,
+            command=self.generar_vin
+        ).pack(fill="x", pady=(0, 10), ipady=10)
+
+        tb.Button(right, text="Renovar Licencia", bootstyle=SUCCESS, command=self.ventana_renovar_licencia).pack(fill="x", pady=6, ipady=4)
+        tb.Button(right, text="Ver VINs Generados", bootstyle=INFO, command=self.ventana_lista_vins).pack(fill="x", pady=6, ipady=4)
+        tb.Button(right, text="Exportar VINs a Excel", bootstyle=INFO, command=self.exportar_vins).pack(fill="x", pady=6, ipady=4)
+        tb.Button(right, text="Eliminar TODOS los VINs", bootstyle=WARNING, command=self.eliminar_todos_vins).pack(fill="x", pady=6, ipady=4)
+        tb.Button(right, text="Eliminar ÚLTIMO VIN", bootstyle=WARNING, command=self.eliminar_ultimo_vin).pack(fill="x", pady=6, ipady=4)
+
+        tb.Separator(right).pack(fill="x", pady=10)
+
+        tb.Button(right, text="Buscar actualizaciones", bootstyle=SECONDARY, command=check_for_updates).pack(fill="x", pady=6, ipady=4)
+        tb.Button(right, text="Cerrar Sesión", bootstyle=DANGER, command=self.cerrar_sesion).pack(fill="x", pady=6, ipady=4)
 
     def ventana_renovar_licencia(self):
         if not self._require_user():
@@ -890,118 +857,50 @@ class VinderApp:
         set_icon(win, self.logo_photo_small)
         win.geometry("820x520")
 
-        ui = {
-            "order_id_var": tb.StringVar(value=""),
-            "amount_var": tb.StringVar(value=""),
-            "ref_var": tb.StringVar(value=""),
-            "clabe_var": tb.StringVar(value=""),
-            "bank_var": tb.StringVar(value=""),
-            "benef_var": tb.StringVar(value=""),
-            "expires_var": tb.StringVar(value=""),
-            "status_var": tb.StringVar(value=""),
-            "tracking_var": tb.StringVar(value=""),
-            "instructions_box": None,
-        }
-
-        ui["_window"] = win
-
-        def on_close():
-            self.stop_transfer_polling(ui)
-            win.destroy()
-
-        win.protocol("WM_DELETE_WINDOW", on_close)
-
         stripe_frame = tb.Labelframe(win, text="Tarjeta (Stripe)", padding=12)
         stripe_frame.pack(fill="x", padx=12, pady=10)
         tb.Label(stripe_frame, text="Si Stripe está habilitado en el servidor, se abrirá el checkout en tu navegador.").pack(anchor="w")
         tb.Button(stripe_frame, text="Pagar con tarjeta", bootstyle=SUCCESS, command=self.iniciar_pago_stripe).pack(anchor="w", pady=6)
 
-        transfer_frame = tb.Labelframe(win, text="Transferencia SPEI (validación manual CEP)", padding=12)
-        transfer_frame.pack(fill="both", expand=True, padx=12, pady=10)
-
-        row1 = tb.Frame(transfer_frame)
-        row1.pack(fill="x", pady=4)
-
-        tb.Button(row1, text="Crear orden SPEI", bootstyle=PRIMARY, command=lambda: self.crear_orden_transferencia(ui)).pack(side="left")
-        tb.Button(row1, text="Actualizar estado/instrucciones", bootstyle=INFO, command=lambda: self.actualizar_instrucciones_transferencia(ui)).pack(side="left", padx=6)
-
-        last = self._load_last_order_id()
-        if last:
-            ui["order_id_var"].set(last)
-            self.last_order_id = last
-
-            def boot():
-                self.actualizar_instrucciones_transferencia(ui)
-                # polling “silencioso” al abrir (sin popup)
-                self.start_transfer_polling(ui, interval_ms=10000, max_minutes=30, notify_popup=False)
-
-            self.master.after(200, boot)
-
-        def copy_to_clip(text_: str):
-            if not text_:
-                return
-            self.master.clipboard_clear()
-            self.master.clipboard_append(text_)
-            messagebox.showinfo("Copiado", "Copiado al portapapeles.")
-
-        grid = tb.Frame(transfer_frame)
-        grid.pack(fill="x", pady=8)
-
-        def add_row(r, label, var, copy_btn=False):
-            tb.Label(grid, text=label, width=18).grid(row=r, column=0, sticky="w", pady=2)
-            e = tb.Entry(grid, textvariable=var, width=55)
-            e.grid(row=r, column=1, sticky="w", pady=2)
-            e.configure(state="readonly")
-            if copy_btn:
-                tb.Button(grid, text="Copiar", bootstyle=SECONDARY, command=lambda: copy_to_clip(var.get())).grid(row=r, column=2, padx=6)
-
-        add_row(0, "Status:", ui["status_var"])
-        add_row(1, "Order ID:", ui["order_id_var"], copy_btn=True)
-        add_row(2, "Monto MXN:", ui["amount_var"])
-        add_row(3, "Referencia:", ui["ref_var"], copy_btn=True)
-        add_row(4, "CLABE:", ui["clabe_var"], copy_btn=True)
-        add_row(5, "Banco:", ui["bank_var"])
-        add_row(6, "Beneficiario:", ui["benef_var"])
-        add_row(7, "Expira:", ui["expires_var"])
-
-        tb.Label(transfer_frame, text="Tracking key (clave de rastreo):").pack(anchor="w", pady=(10, 2))
-        track_row = tb.Frame(transfer_frame)
-        track_row.pack(fill="x")
-
-        tb.Entry(track_row, textvariable=ui["tracking_var"], width=50).pack(side="left")
-        tb.Button(track_row, text="Enviar tracking", bootstyle=SUCCESS, command=lambda: self.enviar_tracking_key(ui)).pack(side="left", padx=8)
-
-        tb.Label(transfer_frame, text="Instrucciones / Estado:").pack(anchor="w", pady=(10, 2))
-        box = ScrolledText(transfer_frame, wrap="word", height=8, font=("Helvetica", 10))
-        box.pack(fill="both", expand=True)
-        box.insert("end", "Crea una orden para ver instrucciones aquí.")
-        box.configure(state="disabled")
-        ui["instructions_box"] = box
-
     def crear_optionmenus(self, parent):
         def valor_inicial(dic):
             return list(dic.keys())[0] if dic else ""
 
-        tb.Label(parent, text="Pos.4 (Modelo):", font=("Helvetica", 12)).pack()
-        tb.OptionMenu(parent, self.var_c4, valor_inicial(posicion_4), *posicion_4.keys()).pack()
+        if not self.var_c4.get():
+            self.var_c4.set(valor_inicial(posicion_4))
+        if not self.var_c5.get():
+            self.var_c5.set(valor_inicial(posicion_5))
+        if not self.var_c6.get():
+            self.var_c6.set(valor_inicial(posicion_6))
+        if not self.var_c7.get():
+            self.var_c7.set(valor_inicial(posicion_7))
+        if not self.var_c8.get():
+            self.var_c8.set(valor_inicial(posicion_8))
+        if not self.var_c10.get():
+            self.var_c10.set(valor_inicial(posicion_10))
+        if not self.var_c11.get():
+            self.var_c11.set(valor_inicial(posicion_11))
 
-        tb.Label(parent, text="Pos.5:", font=("Helvetica", 12)).pack()
-        tb.OptionMenu(parent, self.var_c5, valor_inicial(posicion_5), *posicion_5.keys()).pack()
+        tb.Label(parent, text="Pos.4 (Modelo):", font=("Helvetica", 12)).pack(anchor="w")
+        tb.OptionMenu(parent, self.var_c4, self.var_c4.get(), *posicion_4.keys()).pack(anchor="w", pady=(0, 8))
 
-        tb.Label(parent, text="Pos.6:", font=("Helvetica", 12)).pack()
-        tb.OptionMenu(parent, self.var_c6, valor_inicial(posicion_6), *posicion_6.keys()).pack()
+        tb.Label(parent, text="Pos.5:", font=("Helvetica", 12)).pack(anchor="w")
+        tb.OptionMenu(parent, self.var_c5, self.var_c5.get(), *posicion_5.keys()).pack(anchor="w", pady=(0, 8))
 
-        tb.Label(parent, text="Pos.7:", font=("Helvetica", 12)).pack()
-        tb.OptionMenu(parent, self.var_c7, valor_inicial(posicion_7), *posicion_7.keys()).pack()
+        tb.Label(parent, text="Pos.6:", font=("Helvetica", 12)).pack(anchor="w")
+        tb.OptionMenu(parent, self.var_c6, self.var_c6.get(), *posicion_6.keys()).pack(anchor="w", pady=(0, 8))
 
-        tb.Label(parent, text="Pos.8:", font=("Helvetica", 12)).pack()
-        tb.OptionMenu(parent, self.var_c8, valor_inicial(posicion_8), *posicion_8.keys()).pack()
+        tb.Label(parent, text="Pos.7:", font=("Helvetica", 12)).pack(anchor="w")
+        tb.OptionMenu(parent, self.var_c7, self.var_c7.get(), *posicion_7.keys()).pack(anchor="w", pady=(0, 8))
 
-        tb.Label(parent, text="Pos.10 (Año):", font=("Helvetica", 12)).pack()
-        tb.OptionMenu(parent, self.var_c10, valor_inicial(posicion_10), *posicion_10.keys()).pack()
+        tb.Label(parent, text="Pos.8:", font=("Helvetica", 12)).pack(anchor="w")
+        tb.OptionMenu(parent, self.var_c8, self.var_c8.get(), *posicion_8.keys()).pack(anchor="w", pady=(0, 8))
 
-        tb.Label(parent, text="Pos.11 (Planta):", font=("Helvetica", 12)).pack()
-        tb.OptionMenu(parent, self.var_c11, valor_inicial(posicion_11), *posicion_11.keys()).pack()
+        tb.Label(parent, text="Pos.10 (Año):", font=("Helvetica", 12)).pack(anchor="w")
+        tb.OptionMenu(parent, self.var_c10, self.var_c10.get(), *posicion_10.keys()).pack(anchor="w", pady=(0, 8))
+
+        tb.Label(parent, text="Pos.11 (Planta):", font=("Helvetica", 12)).pack(anchor="w")
+        tb.OptionMenu(parent, self.var_c11, self.var_c11.get(), *posicion_11.keys()).pack(anchor="w", pady=(0, 8))
 
     def generar_vin(self):
         if not self.verificar_licencia():
@@ -1046,7 +945,9 @@ class VinderApp:
             "vin_completo": vin_completo,
         }
         self.guardar_vin_en_flask(vin_data)
-        self.result_label.config(text=f"VIN/NIV: {vin_completo}", font=("Helvetica", 24, "bold"))
+
+        if self.result_label:
+            self.result_label.config(text=f"VIN/NIV: {vin_completo}", font=("Helvetica", 18, "bold"))
 
     def calcular_posicion_9(self, valores: str) -> str:
         sustituciones = {
@@ -1081,19 +982,13 @@ class VinderApp:
             + f"Dígito verificador: {digito_verificador}"
         )
 
-        if self.status_label:
-            self.status_label.config(text=conversion_details)
-        else:
-            self.status_label = tb.Label(
-                self.master,
-                text=conversion_details,
-                font=("Helvetica", 10),
-                bootstyle="secondary",
-                anchor="center",
-                justify="center",
-                wraplength=900,
-            )
-            self.status_label.pack(side="bottom", fill="x", pady=5)
+        # Mostrar detalle SOLO en la columna central de la ventana principal
+        if self.conversion_text:
+            self.conversion_text.configure(state="normal")
+            self.conversion_text.delete("1.0", "end")
+            self.conversion_text.insert("end", conversion_details)
+            self.conversion_text.configure(state="disabled")
+            self.conversion_text.yview_moveto(0)
 
         return digito_verificador
 
@@ -1119,16 +1014,12 @@ class VinderApp:
         st.insert("end", texto_vins)
         st.configure(state="disabled")
 
-        btn_frame = tb.Frame(vins_window)
-        btn_frame.pack(fill="x", pady=5)
-
-        tb.Button(btn_frame, text="Eliminar TODOS los VINs", bootstyle=DANGER, command=self.eliminar_todos_vins).pack(side="left", padx=5)
-        tb.Button(btn_frame, text="Eliminar ÚLTIMO VIN", bootstyle=DANGER, command=self.eliminar_ultimo_vin).pack(side="left", padx=5)
-
     def cerrar_sesion(self):
         self.usuario_actual = None
         self.last_order_id = None
-        self.license_status_var.set("Estado de licencia: (sin verificar)")
+        self.license_badge_var.set("LICENCIA: —")
+        self.license_detail_var.set("")
+        self.show_toast("")
         self.mostrar_ventana_inicio()
 
 
@@ -1137,7 +1028,7 @@ class VinderApp:
 # ============================
 if __name__ == "__main__":
     app_tk = tb.Window(themename="sandstone")
-    app_tk.title("Vinder - ttkbootstrap Edition")
+    app_tk.title("Vinder")
     set_icon(app_tk)
     VinderApp(app_tk)
     app_tk.mainloop()

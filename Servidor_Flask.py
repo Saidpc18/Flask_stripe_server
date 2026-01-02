@@ -1030,25 +1030,6 @@ def eliminar_ultimo_vin():
         return jsonify({"error": "Error al eliminar el último VIN"}), 500
 
 
-# ============================
-# TUFUP (si lo usas)
-# ============================
-@app.route("/check_updates", methods=["GET"])
-def check_updates():
-    def generate():
-        try:
-            yield "data: Configurando repositorio de actualizaciones...\n\n"
-            subprocess.run(["tufup", "init"], check=True)
-            yield "data: Repositorio configurado.\n\n"
-
-            yield "data: Verificando actualizaciones...\n\n"
-            result = subprocess.run(["tufup", "targets"], capture_output=True, text=True, check=True)
-            yield f"data: Resultado: {result.stdout}\n\n"
-        except Exception as e:
-            yield f"data: Error durante verificación: {e}\n\n"
-
-    return Response(generate(), mimetype="text/event-stream")
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

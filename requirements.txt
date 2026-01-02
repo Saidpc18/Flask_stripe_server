@@ -5,11 +5,12 @@ SQLAlchemy==1.4.46
 Flask-SQLAlchemy==2.5.1
 Flask-Migrate==4.0.4
 marshmallow==3.19.0
-
+ttkbootstrap
 stripe==5.0.0
 requests
 bcrypt==3.2.0
-psycopg2-binary==2.9.6
-
+psycopg2-binary==2.9.11
+pillow
+tufup
 pandas
 XlsxWriter
