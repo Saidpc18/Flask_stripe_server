@@ -1,4 +1,4 @@
-# r_Flask.py (PRODUCCIÓN) — completo y corregido
+# Servidor_Flask.py (PRODUCCIÓN) — completo y corregido
 # - Auth por token (Authorization: Bearer ...)
 # - No se confía en "user" enviado por el cliente
 # - client_id vive en DB y se devuelve en /login y /me
@@ -7,12 +7,14 @@
 # - Endpoints sensibles protegidos con @require_auth
 # - Stripe: create-checkout-session usa usuario autenticado
 # - OVERRIDE DE PRUEBAS: PECACAS => client_id "jm" (forzado en backend)
+# - URLs default a Railway (sin Render)
 
 import os
 import io
 import logging
 from datetime import datetime, timedelta
 from functools import wraps
+from typing import Optional
 import subprocess
 
 import bcrypt
@@ -23,7 +25,7 @@ from flask import Flask, request, jsonify, send_file, Response
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
-# (Opcional) si lo tienes instalado; si no, puedes borrar estas 2 líneas y el except ValidationError del webhook
+# Opcional: si no lo tienes instalado, quita el import y el except correspondiente
 from marshmallow import ValidationError
 
 
@@ -61,7 +63,7 @@ if not ADMIN_API_KEY:
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME", "railway"),
     "user": os.getenv("DB_USER", "postgres"),
-    "password": os.getenv("DB_PASSWORD", ""),  # NO hardcode en producción
+    "password": os.getenv("DB_PASSWORD", ""),
     "host": os.getenv("DB_HOST", ""),
     "port": int(os.getenv("DB_PORT", 5432)),
 }
@@ -73,7 +75,6 @@ default_db_url = (
 
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", default_db_url)
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-# útil en prod para evitar conexiones “muertas”
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
 
 db = SQLAlchemy(app)
@@ -94,13 +95,17 @@ STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID")
 if not STRIPE_PRICE_ID:
     logger.warning("STRIPE_PRICE_ID no está configurado (no podrás crear checkout session).")
 
-SUCCESS_URL = os.getenv("SUCCESS_URL", "https://flask-stripe-server.onrender.com/success")
-CANCEL_URL = os.getenv("CANCEL_URL", "https://flask-stripe-server.onrender.com/cancel")
+# ============================
+# PUBLIC URL (RAILWAY)
+# ============================
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://flaskstripeserver-production.up.railway.app").rstrip("/")
+
+SUCCESS_URL = os.getenv("SUCCESS_URL", f"{PUBLIC_BASE_URL}/success")
+CANCEL_URL = os.getenv("CANCEL_URL", f"{PUBLIC_BASE_URL}/cancel")
 
 # ============================
 # OVERRIDES DE PRUEBAS
 # ============================
-# Regla: estos usuarios SIEMPRE usarán este client_id (por ejemplo para hacer QA).
 TEST_CLIENT_OVERRIDES = {
     "PECACAS": "jm",
 }
@@ -189,14 +194,13 @@ def create_auth_token(user: User) -> str:
     return s.dumps({"uid": user.id})
 
 
-def get_user_from_token(token: str, max_age_seconds: int = 60 * 60 * 24 * 7) -> User | None:
+def get_user_from_token(token: str, max_age_seconds: int = 60 * 60 * 24 * 7) -> Optional[User]:
     s = _token_serializer()
     try:
         data = s.loads(token, max_age=max_age_seconds)
         uid = data.get("uid")
         if not uid:
             return None
-        # SQLAlchemy 2+ friendly:
         return db.session.get(User, uid)
     except (BadSignature, SignatureExpired):
         return None
@@ -230,7 +234,7 @@ def require_admin(fn):
 # ============================
 # HELPERS NEGOCIO
 # ============================
-def get_user_by_username(username: str) -> User | None:
+def get_user_by_username(username: str) -> Optional[User]:
     return User.query.filter_by(username=username).first()
 
 
@@ -249,10 +253,6 @@ def renew_license(user: User) -> bool:
 
 
 def _apply_test_client_override_if_needed(user: User) -> None:
-    """
-    Si el username está en TEST_CLIENT_OVERRIDES, forzamos client_id y persistimos.
-    Esto cumple tu requerimiento: PECACAS => jm por default (para pruebas).
-    """
     try:
         uname = (user.username or "").strip().upper()
         forced_client = TEST_CLIENT_OVERRIDES.get(uname)
@@ -297,29 +297,29 @@ def obtener_o_incrementar_secuencial_for_user(user: User, year_input) -> int:
 # ============================
 @app.route("/")
 def home():
-    return "Bienvenido a la API de Vinder (Producción)"
+    return "Bienvenido a la API de Vinder (Producción - Railway)"
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "service": "vinder-api"}), 200
 
 
 @app.route("/me", methods=["GET"])
 @require_auth
 def me():
     user = request.current_user
-    return (
-        jsonify(
-            {
-                "username": user.username,
-                "client_id": user.client_id,
-                "license_active": license_is_active(user),
-                "license_expiration": user.license_expiration.isoformat() if user.license_expiration else None,
-            }
-        ),
-        200,
-    )
+    return jsonify({
+        "username": user.username,
+        "client_id": user.client_id,
+        "license_active": license_is_active(user),
+        "license_expiration": user.license_expiration.isoformat() if user.license_expiration else None,
+    }), 200
 
 
 @app.route("/login", methods=["POST"])
 def login():
-    data = request.get_json(force=True)
+    data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     password = (data.get("password") or "").strip()
 
@@ -333,26 +333,20 @@ def login():
     if not bcrypt.checkpw(password.encode("utf-8"), user.password.encode("utf-8")):
         return jsonify({"error": "Contraseña incorrecta"}), 401
 
-    # ===== OVERRIDE BACKEND PARA PRUEBAS: PECACAS => jm =====
     _apply_test_client_override_if_needed(user)
 
     token = create_auth_token(user)
-    return (
-        jsonify(
-            {
-                "message": "Login exitoso",
-                "token": token,
-                "client_id": user.client_id,
-            }
-        ),
-        200,
-    )
+    return jsonify({
+        "message": "Login exitoso",
+        "token": token,
+        "client_id": user.client_id,
+    }), 200
 
 
 @app.route("/admin/create_user", methods=["POST"])
 @require_admin
 def admin_create_user():
-    data = request.get_json(force=True)
+    data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     password = (data.get("password") or "").strip()
     client_id = (data.get("client_id") or "").strip()
@@ -360,7 +354,6 @@ def admin_create_user():
     if not username or not password:
         return jsonify({"error": "username y password son requeridos"}), 400
 
-    # Default para PECACAS (si no mandan client_id desde admin)
     if not client_id and username.upper() in TEST_CLIENT_OVERRIDES:
         client_id = TEST_CLIENT_OVERRIDES[username.upper()]
 
@@ -375,24 +368,19 @@ def admin_create_user():
     db.session.add(new_user)
     db.session.commit()
 
-    # Aplica override si corresponde (consistencia)
     _apply_test_client_override_if_needed(new_user)
 
-    return jsonify({"message": "Usuario creado", "username": new_user.username, "client_id": new_user.client_id}), 201
+    return jsonify({
+        "message": "Usuario creado",
+        "username": new_user.username,
+        "client_id": new_user.client_id
+    }), 201
 
 
 @app.route("/admin/set_user_client_id", methods=["POST"])
 @require_admin
 def admin_set_user_client_id():
-    """
-    Cambia el client_id de un usuario (soporte / QA).
-    Body JSON:
-      - username: str
-      - client_id: str
-    Header:
-      - X-Admin-Key: <ADMIN_API_KEY>
-    """
-    data = request.get_json(force=True)
+    data = request.get_json(silent=True) or {}
     username = (data.get("username") or "").strip()
     client_id = (data.get("client_id") or "").strip()
 
@@ -406,10 +394,7 @@ def admin_set_user_client_id():
     try:
         user.client_id = client_id
         db.session.commit()
-
-        # Si es PECACAS (u otro override), al final se forzará a su override.
         _apply_test_client_override_if_needed(user)
-
         return jsonify({"message": "client_id actualizado", "username": user.username, "client_id": user.client_id}), 200
     except Exception as e:
         db.session.rollback()
@@ -429,7 +414,7 @@ def funcion_principal():
 @app.route("/obtener_secuencial", methods=["POST"])
 @require_auth
 def obtener_secuencial():
-    data = request.get_json(force=True)
+    data = request.get_json(silent=True) or {}
     year_value = data.get("year")
     if not year_value:
         return jsonify({"error": "Se requiere 'year'"}), 400
@@ -448,7 +433,7 @@ def obtener_secuencial():
 @app.route("/guardar_vin", methods=["POST"])
 @require_auth
 def guardar_vin_endpoint():
-    data = request.get_json(force=True)
+    data = request.get_json(silent=True) or {}
     vin_completo = (data.get("vin_completo") or "").strip()
     if not vin_completo:
         return jsonify({"error": "Falta vin_completo"}), 400
@@ -470,15 +455,8 @@ def guardar_vin_endpoint():
 def ver_vins():
     user = request.current_user
     try:
-        vins = (
-            VIN.query.filter_by(user_id=user.id)
-            .order_by(VIN.created_at.desc())
-            .all()
-        )
-        resultado = [
-            {"vin_completo": v.vin_completo, "created_at": v.created_at.strftime("%Y-%m-%d %H:%M:%S")}
-            for v in vins
-        ]
+        vins = VIN.query.filter_by(user_id=user.id).order_by(VIN.created_at.desc()).all()
+        resultado = [{"vin_completo": v.vin_completo, "created_at": v.created_at.strftime("%Y-%m-%d %H:%M:%S")} for v in vins]
         return jsonify({"vins": resultado}), 200
     except Exception as e:
         logger.error(f"Error al listar VINs: {e}")
@@ -490,15 +468,8 @@ def ver_vins():
 def export_vins():
     user = request.current_user
     try:
-        vins = (
-            VIN.query.filter_by(user_id=user.id)
-            .order_by(VIN.created_at.desc())
-            .all()
-        )
-        data = [
-            {"VIN": v.vin_completo, "Fecha de Creación": v.created_at.strftime("%Y-%m-%d %H:%M:%S")}
-            for v in vins
-        ]
+        vins = VIN.query.filter_by(user_id=user.id).order_by(VIN.created_at.desc()).all()
+        data = [{"VIN": v.vin_completo, "Fecha de Creación": v.created_at.strftime("%Y-%m-%d %H:%M:%S")} for v in vins]
 
         df = pd.DataFrame(data)
         output = io.BytesIO()
@@ -543,11 +514,7 @@ def eliminar_ultimo_vin():
         return jsonify({"error": "Licencia expirada. Renueva para continuar."}), 403
 
     try:
-        ultimo_vin = (
-            VIN.query.filter_by(user_id=user.id)
-            .order_by(VIN.created_at.desc())
-            .first()
-        )
+        ultimo_vin = VIN.query.filter_by(user_id=user.id).order_by(VIN.created_at.desc()).first()
         if not ultimo_vin:
             return jsonify({"error": "No hay VINs para eliminar"}), 404
 
@@ -555,7 +522,6 @@ def eliminar_ultimo_vin():
         if len(vin_str) != 17:
             return jsonify({"error": "VIN con formato inesperado"}), 500
 
-        # VIN: el año está en posición 10 (index 9)
         year_letter = vin_str[9]
         if year_letter not in YEAR_MAP:
             return jsonify({"error": "VIN no contiene código de año válido"}), 500
@@ -563,7 +529,6 @@ def eliminar_ultimo_vin():
         year_int = YEAR_MAP[year_letter]
         year_seq = YearSequence.query.filter_by(user_id=user.id, year=year_int).first()
 
-        # transacción: decrementa secuencial y borra VIN
         if year_seq and year_seq.secuencial > 1:
             year_seq.secuencial -= 1
 
@@ -645,7 +610,6 @@ def cancel():
 @app.route("/check_updates", methods=["GET"])
 @require_admin
 def check_updates():
-    # Endpoint sensible: protegido por ADMIN_API_KEY (X-Admin-Key).
     def generate():
         try:
             yield "data: Configurando repositorio de actualizaciones...\n\n"
@@ -654,8 +618,7 @@ def check_updates():
 
             yield "data: Verificando actualizaciones...\n\n"
             result = subprocess.run(["tufup", "targets"], capture_output=True, text=True, check=True)
-            stdout = result.stdout
-            yield f"data: Resultado: {stdout}\n\n"
+            yield f"data: Resultado: {result.stdout}\n\n"
         except Exception as e:
             yield f"data: Error: {e}\n\n"
 
