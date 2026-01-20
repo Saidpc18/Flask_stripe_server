@@ -382,6 +382,26 @@ def _transfer_public_info(amount_cents: int, reference: str):
 # ============================
 # ROUTES
 # ============================
+
+@app.route("/admin/renew_license", methods=["POST"])
+@require_admin
+def admin_renew_license():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    if not username:
+        return jsonify({"error": "username requerido"}), 400
+
+    user = get_user_by_username(username)
+    if not user:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+
+    renew_license(user)
+    return jsonify({
+        "message": "Licencia renovada 1 año",
+        "username": user.username,
+        "license_expiration": user.license_expiration.isoformat()
+    }), 200
+
 @app.route("/")
 def home():
     return "Bienvenido a la API de Vinder (Producción - Railway)"
