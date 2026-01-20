@@ -1,21 +1,21 @@
-# Servidor_Flask.py (PRODUCCIÓN) — completo y corregido
+# Servidor_Flask.py (PRODUCCIÓN) — Railway
 # - Auth por token (Authorization: Bearer ...)
 # - No se confía en "user" enviado por el cliente
 # - client_id vive en DB y se devuelve en /login y /me
-# - Admin endpoint para crear usuarios con client_id (y setearlo)
-# - Secretos SOLO por variables de entorno (sin hardcode)
-# - Endpoints sensibles protegidos con @require_auth
-# - Stripe: create-checkout-session usa usuario autenticado
-# - OVERRIDE DE PRUEBAS: PECACAS => client_id "jm" (forzado en backend)
+# - Admin endpoints protegidos con X-Admin-Key
+# - Stripe: create-checkout-session usa usuario autenticado (y fallback legacy opcional)
+# - Transferencia: crear orden, referencia, expiración, submit de rastreo, approve/reject admin
 # - URLs default a Railway (sin Render)
 
 import os
 import io
 import logging
+import secrets
+import string
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Optional
-import subprocess
+from decimal import Decimal, ROUND_HALF_UP
 
 import bcrypt
 import pandas as pd
@@ -24,10 +24,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from flask import Flask, request, jsonify, send_file, Response
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
-
-# Opcional: si no lo tienes instalado, quita el import y el except correspondiente
-from marshmallow import ValidationError
-
+import subprocess
 
 # ============================
 # APP
@@ -40,26 +37,34 @@ app = Flask(__name__)
 logging.basicConfig(
     level=logging.DEBUG if os.getenv("FLASK_ENV") != "production" else logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("app.log"), logging.StreamHandler()],
+    handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
 # ============================
-# CONFIG PRODUCCIÓN
+# CONFIG
 # ============================
 app.config["DEBUG"] = False if os.getenv("FLASK_ENV") == "production" else True
 
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY")
 if not app.config["SECRET_KEY"]:
-    raise ValueError("SECRET_KEY es obligatorio en producción (env var).")
+    raise ValueError("SECRET_KEY es obligatorio (env var).")
 
-ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 if not ADMIN_API_KEY:
     logger.warning("ADMIN_API_KEY no está configurado (no podrás usar endpoints /admin/*).")
 
 # ============================
 # DB CONFIG
 # ============================
+def _normalize_database_url(url: str) -> str:
+    # Algunos providers usan "postgres://", SQLAlchemy prefiere "postgresql://"
+    if url and url.startswith("postgres://"):
+        return "postgresql://" + url[len("postgres://") :]
+    return url
+
+db_url_env = _normalize_database_url(os.getenv("DATABASE_URL", ""))
+
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME", "railway"),
     "user": os.getenv("DB_USER", "postgres"),
@@ -73,7 +78,7 @@ default_db_url = (
     f"@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['dbname']}"
 )
 
-app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", default_db_url)
+app.config["SQLALCHEMY_DATABASE_URI"] = db_url_env or default_db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
 
@@ -81,34 +86,50 @@ db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
 # ============================
-# STRIPE CONFIG (SOLO ENV VARS)
-# ============================
-stripe.api_key = os.getenv("STRIPE_API_KEY")
-webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
-
-if not stripe.api_key:
-    raise ValueError("STRIPE_API_KEY es obligatorio en producción (env var).")
-if not webhook_secret:
-    raise ValueError("STRIPE_WEBHOOK_SECRET es obligatorio en producción (env var).")
-
-STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID")
-if not STRIPE_PRICE_ID:
-    logger.warning("STRIPE_PRICE_ID no está configurado (no podrás crear checkout session).")
-
-# ============================
 # PUBLIC URL (RAILWAY)
 # ============================
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://flaskstripeserver-production.up.railway.app").rstrip("/")
+PUBLIC_BASE_URL = os.getenv(
+    "PUBLIC_BASE_URL",
+    "https://flaskstripeserver-production.up.railway.app"
+).rstrip("/")
 
 SUCCESS_URL = os.getenv("SUCCESS_URL", f"{PUBLIC_BASE_URL}/success")
 CANCEL_URL = os.getenv("CANCEL_URL", f"{PUBLIC_BASE_URL}/cancel")
 
 # ============================
+# STRIPE CONFIG (ENV)
+# ============================
+stripe.api_key = os.getenv("STRIPE_API_KEY", "")
+webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "")
+
+if not stripe.api_key:
+    logger.warning("STRIPE_API_KEY no está configurado. Stripe checkout NO funcionará.")
+if not webhook_secret:
+    logger.warning("STRIPE_WEBHOOK_SECRET no está configurado. Webhook NO funcionará.")
+if not STRIPE_PRICE_ID:
+    logger.warning("STRIPE_PRICE_ID no está configurado. No podrás crear checkout session.")
+
+# Si tu cliente viejo NO manda Authorization a /create-checkout-session, puedes permitir fallback:
+ALLOW_LEGACY_STRIPE = (os.getenv("ALLOW_LEGACY_STRIPE", "1").strip().lower() in ("1", "true", "yes"))
+
+# ============================
+# TRANSFER CONFIG (ENV)
+# ============================
+TRANSFER_BANK_NAME = os.getenv("TRANSFER_BANK_NAME", "").strip()
+TRANSFER_BENEFICIARY_NAME = os.getenv("TRANSFER_BENEFICIARY_NAME", "").strip()
+TRANSFER_CLABE = os.getenv("TRANSFER_CLABE", "").strip()
+TRANSFER_AMOUNT_MXN = os.getenv("TRANSFER_AMOUNT_MXN", "").strip()  # ej "499.00"
+TRANSFER_ORDER_TTL_MIN = int(os.getenv("TRANSFER_ORDER_TTL_MIN", "120"))  # minutos
+TRANSFER_USE_UNIQUE_CENTS = (os.getenv("TRANSFER_USE_UNIQUE_CENTS", "1").strip().lower() in ("1", "true", "yes"))
+
+def _transfer_enabled() -> bool:
+    return all([TRANSFER_BANK_NAME, TRANSFER_BENEFICIARY_NAME, TRANSFER_CLABE, TRANSFER_AMOUNT_MXN])
+
+# ============================
 # OVERRIDES DE PRUEBAS
 # ============================
-TEST_CLIENT_OVERRIDES = {
-    "PECACAS": "jm",
-}
+TEST_CLIENT_OVERRIDES = {"PECACAS": "jm"}
 
 # ============================
 # YEAR MAP
@@ -131,28 +152,20 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
-
-    client_id = db.Column(db.String(50), nullable=False)  # obligatorio
+    client_id = db.Column(db.String(50), nullable=False)
 
     license_expiration = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=db.func.now())
 
     vins = db.relationship("VIN", backref="owner", lazy=True)
 
-    def __repr__(self):
-        return f"<User {self.username}>"
-
-
 class VIN(db.Model):
     __tablename__ = "VIN"
+
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=False)
     vin_completo = db.Column(db.String(17), nullable=False)
     created_at = db.Column(db.DateTime, default=db.func.now())
-
-    def __repr__(self):
-        return f"<VIN {self.vin_completo}>"
-
 
 class Subscription(db.Model):
     __tablename__ = "subscriptions"
@@ -164,10 +177,6 @@ class Subscription(db.Model):
     current_period_end = db.Column(db.DateTime(timezone=True))
     created_at = db.Column(db.DateTime(timezone=True), server_default=db.func.now())
 
-    def __repr__(self):
-        return f"<Subscription {self.subscription_id} - {self.status}>"
-
-
 class YearSequence(db.Model):
     __tablename__ = "year_sequences"
 
@@ -178,9 +187,38 @@ class YearSequence(db.Model):
 
     __table_args__ = (db.UniqueConstraint("user_id", "year", name="uq_user_year"),)
 
-    def __repr__(self):
-        return f"<YearSequence user_id={self.user_id}, year={self.year}, secuencial={self.secuencial}>"
+class TransferOrder(db.Model):
+    __tablename__ = "transfer_orders"
 
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=False)
+
+    amount_cents = db.Column(db.Integer, nullable=False)
+    reference = db.Column(db.String(64), nullable=False, unique=True)
+
+    status = db.Column(db.String(20), nullable=False, default="pending")
+    tracking_key = db.Column(db.String(128), nullable=True)
+
+    created_at = db.Column(db.DateTime, default=db.func.now())
+    expires_at = db.Column(db.DateTime, nullable=False)
+
+    def to_public_dict(self):
+        return {
+            "order_id": self.id,
+            "reference": self.reference,
+            "status": self.status,
+            "amount_mxn": f"{self.amount_cents / 100:.2f}",
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "tracking_key": self.tracking_key,
+        }
+
+# Auto-create (no reemplaza migraciones, pero evita “table not found” en primera corrida)
+with app.app_context():
+    try:
+        db.create_all()
+    except Exception as e:
+        logger.warning(f"No se pudo db.create_all(): {e}")
 
 # ============================
 # AUTH (TOKEN)
@@ -188,23 +226,18 @@ class YearSequence(db.Model):
 def _token_serializer():
     return URLSafeTimedSerializer(app.config["SECRET_KEY"], salt="vinder-auth")
 
-
 def create_auth_token(user: User) -> str:
-    s = _token_serializer()
-    return s.dumps({"uid": user.id})
-
+    return _token_serializer().dumps({"uid": user.id})
 
 def get_user_from_token(token: str, max_age_seconds: int = 60 * 60 * 24 * 7) -> Optional[User]:
-    s = _token_serializer()
     try:
-        data = s.loads(token, max_age=max_age_seconds)
+        data = _token_serializer().loads(token, max_age=max_age_seconds)
         uid = data.get("uid")
         if not uid:
             return None
         return db.session.get(User, uid)
     except (BadSignature, SignatureExpired):
         return None
-
 
 def require_auth(fn):
     @wraps(fn)
@@ -220,37 +253,34 @@ def require_auth(fn):
         return fn(*args, **kwargs)
     return wrapper
 
-
 def require_admin(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        api_key = request.headers.get("X-Admin-Key")
+        api_key = request.headers.get("X-Admin-Key", "")
         if not ADMIN_API_KEY or api_key != ADMIN_API_KEY:
             return jsonify({"error": "No autorizado"}), 401
         return fn(*args, **kwargs)
     return wrapper
 
-
 # ============================
-# HELPERS NEGOCIO
+# HELPERS
 # ============================
 def get_user_by_username(username: str) -> Optional[User]:
     return User.query.filter_by(username=username).first()
-
 
 def license_is_active(user: User) -> bool:
     if not user or not user.license_expiration:
         return False
     return user.license_expiration > datetime.now()
 
-
-def renew_license(user: User) -> bool:
+def extend_license(user: User, days: int = 365) -> bool:
     if not user:
         return False
-    user.license_expiration = datetime.now() + timedelta(days=365)
+    now = datetime.now()
+    base = user.license_expiration if (user.license_expiration and user.license_expiration > now) else now
+    user.license_expiration = base + timedelta(days=days)
     db.session.commit()
     return True
-
 
 def _apply_test_client_override_if_needed(user: User) -> None:
     try:
@@ -263,7 +293,6 @@ def _apply_test_client_override_if_needed(user: User) -> None:
     except Exception as e:
         db.session.rollback()
         logger.warning(f"No se pudo aplicar override de client_id para {user.username}: {e}")
-
 
 def obtener_o_incrementar_secuencial_for_user(user: User, year_input) -> int:
     if not user:
@@ -291,6 +320,64 @@ def obtener_o_incrementar_secuencial_for_user(user: User, year_input) -> int:
     db.session.commit()
     return year_seq.secuencial
 
+def _parse_mxn_to_cents(s: str) -> int:
+    # "499.00" -> 49900
+    d = Decimal(s).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return int((d * 100).to_integral_value(rounding=ROUND_HALF_UP))
+
+def _gen_reference(prefix: str = "VDR") -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    rnd = "".join(secrets.choice(alphabet) for _ in range(10))
+    return f"{prefix}-{rnd}"
+
+def _expire_transfer_orders_now() -> None:
+    # Marca expiradas órdenes pending/submitted vencidas
+    try:
+        now = datetime.now()
+        q = TransferOrder.query.filter(
+            TransferOrder.status.in_(["pending", "submitted"]),
+            TransferOrder.expires_at < now
+        )
+        updated = q.update({TransferOrder.status: "expired"}, synchronize_session=False)
+        if updated:
+            db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.warning(f"No se pudo expirar órdenes: {e}")
+
+def _choose_unique_cents(base_cents: int) -> int:
+    # Retorna base_cents + x (x=1..99) no usado por órdenes vivas
+    if not TRANSFER_USE_UNIQUE_CENTS:
+        return base_cents
+    try:
+        now = datetime.now()
+        live = TransferOrder.query.filter(
+            TransferOrder.status.in_(["pending", "submitted"]),
+            TransferOrder.expires_at > now,
+            TransferOrder.amount_cents.between(base_cents, base_cents + 99),
+        ).with_entities(TransferOrder.amount_cents).all()
+        used = {row[0] - base_cents for row in live}
+        candidates = [c for c in range(1, 100) if c not in used]
+        if not candidates:
+            # si se llenó, ya ni modo: random (puede colisionar)
+            return base_cents + secrets.randbelow(99) + 1
+        return base_cents + secrets.choice(candidates)
+    except Exception as e:
+        logger.warning(f"No se pudo elegir centavos únicos: {e}")
+        return base_cents + secrets.randbelow(99) + 1
+
+def _transfer_public_info(amount_cents: int, reference: str):
+    return {
+        "method": "transfer",
+        "bank_name": TRANSFER_BANK_NAME,
+        "beneficiary_name": TRANSFER_BENEFICIARY_NAME,
+        "clabe": TRANSFER_CLABE,
+        "amount_mxn": f"{amount_cents / 100:.2f}",
+        "reference": reference,
+        "concept": reference,  # útil para pegar como "Concepto" en la transferencia
+        "ttl_minutes": TRANSFER_ORDER_TTL_MIN,
+        "unique_cents": TRANSFER_USE_UNIQUE_CENTS,
+    }
 
 # ============================
 # ROUTES
@@ -299,11 +386,9 @@ def obtener_o_incrementar_secuencial_for_user(user: User, year_input) -> int:
 def home():
     return "Bienvenido a la API de Vinder (Producción - Railway)"
 
-
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "service": "vinder-api"}), 200
-
 
 @app.route("/me", methods=["GET"])
 @require_auth
@@ -315,7 +400,6 @@ def me():
         "license_active": license_is_active(user),
         "license_expiration": user.license_expiration.isoformat() if user.license_expiration else None,
     }), 200
-
 
 @app.route("/login", methods=["POST"])
 def login():
@@ -342,7 +426,9 @@ def login():
         "client_id": user.client_id,
     }), 200
 
-
+# ----------------------------
+# Admin: usuarios
+# ----------------------------
 @app.route("/admin/create_user", methods=["POST"])
 @require_admin
 def admin_create_user():
@@ -356,7 +442,6 @@ def admin_create_user():
 
     if not client_id and username.upper() in TEST_CLIENT_OVERRIDES:
         client_id = TEST_CLIENT_OVERRIDES[username.upper()]
-
     if not client_id:
         return jsonify({"error": "client_id es requerido"}), 400
 
@@ -370,12 +455,7 @@ def admin_create_user():
 
     _apply_test_client_override_if_needed(new_user)
 
-    return jsonify({
-        "message": "Usuario creado",
-        "username": new_user.username,
-        "client_id": new_user.client_id
-    }), 201
-
+    return jsonify({"message": "Usuario creado", "username": new_user.username, "client_id": new_user.client_id}), 201
 
 @app.route("/admin/set_user_client_id", methods=["POST"])
 @require_admin
@@ -401,7 +481,9 @@ def admin_set_user_client_id():
         logger.error(f"Error actualizando client_id para {username}: {e}")
         return jsonify({"error": "No se pudo actualizar client_id"}), 500
 
-
+# ----------------------------
+# Licencia / VINs
+# ----------------------------
 @app.route("/funcion-principal", methods=["GET"])
 @require_auth
 def funcion_principal():
@@ -409,7 +491,6 @@ def funcion_principal():
     if not license_is_active(user):
         return jsonify({"error": "Licencia expirada. Renueva para continuar."}), 403
     return jsonify({"message": "Acceso permitido"}), 200
-
 
 @app.route("/obtener_secuencial", methods=["POST"])
 @require_auth
@@ -428,7 +509,6 @@ def obtener_secuencial():
     except Exception as e:
         logger.error(f"Error al obtener secuencial: {e}")
         return jsonify({"error": "Error al obtener el secuencial"}), 500
-
 
 @app.route("/guardar_vin", methods=["POST"])
 @require_auth
@@ -449,19 +529,20 @@ def guardar_vin_endpoint():
         logger.error(f"Error al guardar VIN: {e}")
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/ver_vins", methods=["GET"])
 @require_auth
 def ver_vins():
     user = request.current_user
     try:
         vins = VIN.query.filter_by(user_id=user.id).order_by(VIN.created_at.desc()).all()
-        resultado = [{"vin_completo": v.vin_completo, "created_at": v.created_at.strftime("%Y-%m-%d %H:%M:%S")} for v in vins]
+        resultado = [
+            {"vin_completo": v.vin_completo, "created_at": v.created_at.strftime("%Y-%m-%d %H:%M:%S")}
+            for v in vins
+        ]
         return jsonify({"vins": resultado}), 200
     except Exception as e:
         logger.error(f"Error al listar VINs: {e}")
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/export_vins", methods=["GET"])
 @require_auth
@@ -487,7 +568,6 @@ def export_vins():
         logger.error(f"Error al exportar VINs: {e}")
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/eliminar_todos_vins", methods=["POST"])
 @require_auth
 def eliminar_todos_vins():
@@ -504,7 +584,6 @@ def eliminar_todos_vins():
         db.session.rollback()
         logger.error(f"Error al eliminar todos los VINs: {e}")
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/eliminar_ultimo_vin", methods=["POST"])
 @require_auth
@@ -528,7 +607,6 @@ def eliminar_ultimo_vin():
 
         year_int = YEAR_MAP[year_letter]
         year_seq = YearSequence.query.filter_by(user_id=user.id, year=year_int).first()
-
         if year_seq and year_seq.secuencial > 1:
             year_seq.secuencial -= 1
 
@@ -540,14 +618,33 @@ def eliminar_ultimo_vin():
         logger.error(f"Error al eliminar el último VIN: {e}")
         return jsonify({"error": str(e)}), 500
 
-
+# ----------------------------
+# Stripe checkout (token + fallback legacy)
+# ----------------------------
 @app.route("/create-checkout-session", methods=["POST"])
-@require_auth
 def create_checkout_session():
-    user = request.current_user
+    if not stripe.api_key or not STRIPE_PRICE_ID:
+        return jsonify({"error": "Stripe no configurado en el servidor"}), 500
 
-    if not STRIPE_PRICE_ID:
-        return jsonify({"error": "STRIPE_PRICE_ID no configurado en el servidor"}), 500
+    # 1) Preferido: auth token
+    auth = request.headers.get("Authorization", "")
+    user: Optional[User] = None
+
+    if auth.startswith("Bearer "):
+        token = auth.split(" ", 1)[1].strip()
+        user = get_user_from_token(token)
+
+    # 2) Fallback legacy: JSON {"user": "..."} (para tu app vieja)
+    if user is None and ALLOW_LEGACY_STRIPE:
+        data = request.get_json(silent=True) or {}
+        legacy_username = (data.get("user") or "").strip()
+        if legacy_username:
+            user = get_user_by_username(legacy_username)
+            if user:
+                logger.warning("[LEGACY] create-checkout-session llamado sin Authorization (usando user del body).")
+
+    if user is None:
+        return jsonify({"error": "Falta Authorization: Bearer <token>"}), 401
 
     try:
         session_obj = stripe.checkout.Session.create(
@@ -565,9 +662,11 @@ def create_checkout_session():
         logger.error(f"Error al crear checkout session: {e}")
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
+    if not webhook_secret:
+        return jsonify({"error": "Webhook no configurado"}), 500
+
     payload = request.data
     sig_header = request.headers.get("Stripe-Signature")
 
@@ -580,15 +679,11 @@ def stripe_webhook():
             session = event_data
             usuario = session.get("client_reference_id")
             if usuario:
-                user = get_user_by_username(usuario)
-                if user:
-                    renew_license(user)
+                u = get_user_by_username(usuario)
+                if u:
+                    extend_license(u, days=365)
 
         return jsonify({"status": "success"}), 200
-
-    except ValidationError as e:
-        logger.error(f"Datos del evento inválidos: {getattr(e, 'messages', str(e))}")
-        return jsonify({"error": "Datos del evento inválidos"}), 400
     except stripe.error.SignatureVerificationError as e:
         logger.error(f"Firma inválida webhook: {e}")
         return jsonify({"error": "Firma del webhook inválida"}), 400
@@ -596,17 +691,185 @@ def stripe_webhook():
         logger.error(f"Error procesando webhook: {e}")
         return jsonify({"error": "Error al procesar webhook"}), 400
 
-
 @app.route("/success", methods=["GET"])
 def success():
     return "¡Pago exitoso! Gracias por tu compra."
-
 
 @app.route("/cancel", methods=["GET"])
 def cancel():
     return "El proceso de pago fue cancelado o falló."
 
+# ----------------------------
+# Transferencia (sin comisiones)
+# ----------------------------
+@app.route("/transfer/info", methods=["GET"])
+@require_auth
+def transfer_info():
+    if not _transfer_enabled():
+        return jsonify({"error": "Transferencia no configurada en el servidor"}), 500
 
+    base_cents = _parse_mxn_to_cents(TRANSFER_AMOUNT_MXN)
+    # aquí no generamos orden; solo mostramos el “precio base”
+    return jsonify({
+        "enabled": True,
+        "bank_name": TRANSFER_BANK_NAME,
+        "beneficiary_name": TRANSFER_BENEFICIARY_NAME,
+        "clabe": TRANSFER_CLABE,
+        "base_amount_mxn": f"{base_cents/100:.2f}",
+        "ttl_minutes": TRANSFER_ORDER_TTL_MIN,
+        "unique_cents": TRANSFER_USE_UNIQUE_CENTS,
+    }), 200
+
+@app.route("/transfer/create-order", methods=["POST"])
+@require_auth
+def transfer_create_order():
+    if not _transfer_enabled():
+        return jsonify({"error": "Transferencia no configurada en el servidor"}), 500
+
+    _expire_transfer_orders_now()
+
+    user = request.current_user
+    try:
+        base_cents = _parse_mxn_to_cents(TRANSFER_AMOUNT_MXN)
+        amount_cents = _choose_unique_cents(base_cents)
+
+        # referencia única
+        reference = _gen_reference("VDR")
+
+        expires_at = datetime.now() + timedelta(minutes=TRANSFER_ORDER_TTL_MIN)
+        order = TransferOrder(
+            user_id=user.id,
+            amount_cents=amount_cents,
+            reference=reference,
+            status="pending",
+            expires_at=expires_at,
+        )
+        db.session.add(order)
+        db.session.commit()
+
+        return jsonify({
+            "order": order.to_public_dict(),
+            "payment": _transfer_public_info(amount_cents=amount_cents, reference=reference),
+            "notes": "Haz la transferencia con el CONCEPTO/REFERENCIA EXACTO. Después envía tu clave de rastreo.",
+        }), 201
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creando orden transferencia: {e}")
+        return jsonify({"error": "No se pudo crear la orden de transferencia"}), 500
+
+@app.route("/transfer/my-orders", methods=["GET"])
+@require_auth
+def transfer_my_orders():
+    _expire_transfer_orders_now()
+    user = request.current_user
+    orders = TransferOrder.query.filter_by(user_id=user.id).order_by(TransferOrder.created_at.desc()).limit(20).all()
+    return jsonify({"orders": [o.to_public_dict() for o in orders]}), 200
+
+@app.route("/transfer/submit", methods=["POST"])
+@require_auth
+def transfer_submit():
+    _expire_transfer_orders_now()
+    user = request.current_user
+    data = request.get_json(silent=True) or {}
+
+    reference = (data.get("reference") or "").strip()
+    tracking_key = (data.get("tracking_key") or "").strip()
+
+    if not reference or not tracking_key:
+        return jsonify({"error": "reference y tracking_key son requeridos"}), 400
+
+    order = TransferOrder.query.filter_by(user_id=user.id, reference=reference).first()
+    if not order:
+        return jsonify({"error": "Orden no encontrada"}), 404
+
+    if order.status in ("approved", "rejected", "expired"):
+        return jsonify({"error": f"No puedes enviar comprobante. Estado actual: {order.status}"}), 400
+
+    if order.expires_at < datetime.now():
+        order.status = "expired"
+        db.session.commit()
+        return jsonify({"error": "La orden expiró. Crea una nueva."}), 400
+
+    order.tracking_key = tracking_key
+    order.status = "submitted"
+    db.session.commit()
+
+    return jsonify({"message": "Comprobante enviado. En espera de aprobación.", "order": order.to_public_dict()}), 200
+
+# ----------------------------
+# Admin: aprobar/rechazar transferencias
+# ----------------------------
+@app.route("/admin/transfer/list", methods=["GET"])
+@require_admin
+def admin_transfer_list():
+    _expire_transfer_orders_now()
+    status = (request.args.get("status") or "").strip().lower()
+    q = TransferOrder.query
+    if status:
+        q = q.filter_by(status=status)
+    orders = q.order_by(TransferOrder.created_at.desc()).limit(200).all()
+    return jsonify({"orders": [o.to_public_dict() for o in orders]}), 200
+
+@app.route("/admin/transfer/approve", methods=["POST"])
+@require_admin
+def admin_transfer_approve():
+    _expire_transfer_orders_now()
+    data = request.get_json(silent=True) or {}
+    reference = (data.get("reference") or "").strip()
+
+    if not reference:
+        return jsonify({"error": "reference es requerido"}), 400
+
+    order = TransferOrder.query.filter_by(reference=reference).first()
+    if not order:
+        return jsonify({"error": "Orden no encontrada"}), 404
+
+    if order.status == "approved":
+        return jsonify({"message": "Ya estaba aprobada", "order": order.to_public_dict()}), 200
+
+    if order.status in ("rejected", "expired"):
+        return jsonify({"error": f"No se puede aprobar. Estado: {order.status}"}), 400
+
+    user = db.session.get(User, order.user_id)
+    if not user:
+        return jsonify({"error": "Usuario de la orden no existe"}), 500
+
+    try:
+        order.status = "approved"
+        db.session.commit()
+
+        extend_license(user, days=365)
+
+        return jsonify({"message": "Orden aprobada y licencia renovada", "order": order.to_public_dict()}), 200
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error aprobando orden {reference}: {e}")
+        return jsonify({"error": "No se pudo aprobar"}), 500
+
+@app.route("/admin/transfer/reject", methods=["POST"])
+@require_admin
+def admin_transfer_reject():
+    _expire_transfer_orders_now()
+    data = request.get_json(silent=True) or {}
+    reference = (data.get("reference") or "").strip()
+
+    if not reference:
+        return jsonify({"error": "reference es requerido"}), 400
+
+    order = TransferOrder.query.filter_by(reference=reference).first()
+    if not order:
+        return jsonify({"error": "Orden no encontrada"}), 404
+
+    if order.status in ("approved", "expired"):
+        return jsonify({"error": f"No se puede rechazar. Estado: {order.status}"}), 400
+
+    order.status = "rejected"
+    db.session.commit()
+    return jsonify({"message": "Orden rechazada", "order": order.to_public_dict()}), 200
+
+# ----------------------------
+# Updates endpoint (si lo usas)
+# ----------------------------
 @app.route("/check_updates", methods=["GET"])
 @require_admin
 def check_updates():
@@ -623,7 +886,6 @@ def check_updates():
             yield f"data: Error: {e}\n\n"
 
     return Response(generate(), mimetype="text/event-stream")
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
