@@ -1,11 +1,9 @@
-# Servidor_Flask.py (PRODUCCIÓN) — Railway
-# - Auth por token (Authorization: Bearer ...)
-# - No se confía en "user" enviado por el cliente
-# - client_id vive en DB y se devuelve en /login y /me
-# - Admin endpoints protegidos con X-Admin-Key
-# - Stripe: create-checkout-session usa usuario autenticado (y fallback legacy opcional)
-# - Transferencia: crear orden, referencia, expiración, submit de rastreo, approve/reject admin
-# - URLs default a Railway (sin Render)
+# Servidor_Flask.py (PRODUCCIÓN) — Railway (CORREGIDO)
+# - UTC en todo (licencias/expiraciones)
+# - NO db.create_all() en producción (solo opcional en dev)
+# - Stripe webhook más robusto: valida subscripción y usa metadata username
+# - Overrides de pruebas SOLO fuera de production
+# - /check_updates deshabilitado por default (habilítalo con env si lo necesitas)
 
 import os
 import io
@@ -31,11 +29,14 @@ import subprocess
 # ============================
 app = Flask(__name__)
 
+ENV = (os.getenv("FLASK_ENV") or "").strip().lower()
+IS_PROD = ENV == "production"
+
 # ============================
 # LOGGING
 # ============================
 logging.basicConfig(
-    level=logging.DEBUG if os.getenv("FLASK_ENV") != "production" else logging.INFO,
+    level=logging.INFO if IS_PROD else logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.StreamHandler()],
 )
@@ -44,7 +45,7 @@ logger = logging.getLogger(__name__)
 # ============================
 # CONFIG
 # ============================
-app.config["DEBUG"] = False if os.getenv("FLASK_ENV") == "production" else True
+app.config["DEBUG"] = False if IS_PROD else True
 
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY")
 if not app.config["SECRET_KEY"]:
@@ -58,7 +59,6 @@ if not ADMIN_API_KEY:
 # DB CONFIG
 # ============================
 def _normalize_database_url(url: str) -> str:
-    # Algunos providers usan "postgres://", SQLAlchemy prefiere "postgresql://"
     if url and url.startswith("postgres://"):
         return "postgresql://" + url[len("postgres://") :]
     return url
@@ -110,7 +110,6 @@ if not webhook_secret:
 if not STRIPE_PRICE_ID:
     logger.warning("STRIPE_PRICE_ID no está configurado. No podrás crear checkout session.")
 
-# Si tu cliente viejo NO manda Authorization a /create-checkout-session, puedes permitir fallback:
 ALLOW_LEGACY_STRIPE = (os.getenv("ALLOW_LEGACY_STRIPE", "1").strip().lower() in ("1", "true", "yes"))
 
 # ============================
@@ -127,9 +126,9 @@ def _transfer_enabled() -> bool:
     return all([TRANSFER_BANK_NAME, TRANSFER_BENEFICIARY_NAME, TRANSFER_CLABE, TRANSFER_AMOUNT_MXN])
 
 # ============================
-# OVERRIDES DE PRUEBAS
+# OVERRIDES DE PRUEBAS (SOLO DEV)
 # ============================
-TEST_CLIENT_OVERRIDES = {"PECACAS": "jm"}
+TEST_CLIENT_OVERRIDES = {"PECACAS": "jm"}  # solo aplica si NO es prod
 
 # ============================
 # YEAR MAP
@@ -144,6 +143,12 @@ YEAR_MAP = {
 }
 
 # ============================
+# UTILS TIME (UTC)
+# ============================
+def utcnow() -> datetime:
+    return datetime.utcnow()
+
+# ============================
 # MODELOS
 # ============================
 class User(db.Model):
@@ -154,6 +159,7 @@ class User(db.Model):
     password = db.Column(db.String(200), nullable=False)
     client_id = db.Column(db.String(50), nullable=False)
 
+    # Guardamos UTC naive (datetime.utcnow())
     license_expiration = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=db.func.now())
 
@@ -213,12 +219,16 @@ class TransferOrder(db.Model):
             "tracking_key": self.tracking_key,
         }
 
-# Auto-create (no reemplaza migraciones, pero evita “table not found” en primera corrida)
-with app.app_context():
-    try:
-        db.create_all()
-    except Exception as e:
-        logger.warning(f"No se pudo db.create_all(): {e}")
+# IMPORTANTE:
+# En producción NO usamos create_all. Migraciones mandan.
+ALLOW_CREATE_ALL = (os.getenv("ALLOW_CREATE_ALL", "0").strip().lower() in ("1", "true", "yes"))
+if (not IS_PROD) and ALLOW_CREATE_ALL:
+    with app.app_context():
+        try:
+            db.create_all()
+            logger.warning("db.create_all() ejecutado (DEV). En producción NO se debe usar.")
+        except Exception as e:
+            logger.warning(f"No se pudo db.create_all(): {e}")
 
 # ============================
 # AUTH (TOKEN)
@@ -271,18 +281,34 @@ def get_user_by_username(username: str) -> Optional[User]:
 def license_is_active(user: User) -> bool:
     if not user or not user.license_expiration:
         return False
-    return user.license_expiration > datetime.now()
+    return user.license_expiration > utcnow()
+
+def _set_license_expiration_max(user: User, new_expiration_utc: datetime) -> bool:
+    """Setea license_expiration al máximo entre el valor actual y new_expiration_utc (ambos UTC naive)."""
+    if not user:
+        return False
+    now = utcnow()
+    current = user.license_expiration
+    if current and current > now:
+        user.license_expiration = max(current, new_expiration_utc)
+    else:
+        user.license_expiration = new_expiration_utc
+    db.session.commit()
+    return True
 
 def extend_license(user: User, days: int = 365) -> bool:
     if not user:
         return False
-    now = datetime.now()
+    now = utcnow()
     base = user.license_expiration if (user.license_expiration and user.license_expiration > now) else now
     user.license_expiration = base + timedelta(days=days)
     db.session.commit()
     return True
 
 def _apply_test_client_override_if_needed(user: User) -> None:
+    # SOLO fuera de producción
+    if IS_PROD:
+        return
     try:
         uname = (user.username or "").strip().upper()
         forced_client = TEST_CLIENT_OVERRIDES.get(uname)
@@ -321,7 +347,6 @@ def obtener_o_incrementar_secuencial_for_user(user: User, year_input) -> int:
     return year_seq.secuencial
 
 def _parse_mxn_to_cents(s: str) -> int:
-    # "499.00" -> 49900
     d = Decimal(s).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return int((d * 100).to_integral_value(rounding=ROUND_HALF_UP))
 
@@ -331,9 +356,8 @@ def _gen_reference(prefix: str = "VDR") -> str:
     return f"{prefix}-{rnd}"
 
 def _expire_transfer_orders_now() -> None:
-    # Marca expiradas órdenes pending/submitted vencidas
     try:
-        now = datetime.now()
+        now = utcnow()
         q = TransferOrder.query.filter(
             TransferOrder.status.in_(["pending", "submitted"]),
             TransferOrder.expires_at < now
@@ -346,11 +370,10 @@ def _expire_transfer_orders_now() -> None:
         logger.warning(f"No se pudo expirar órdenes: {e}")
 
 def _choose_unique_cents(base_cents: int) -> int:
-    # Retorna base_cents + x (x=1..99) no usado por órdenes vivas
     if not TRANSFER_USE_UNIQUE_CENTS:
         return base_cents
     try:
-        now = datetime.now()
+        now = utcnow()
         live = TransferOrder.query.filter(
             TransferOrder.status.in_(["pending", "submitted"]),
             TransferOrder.expires_at > now,
@@ -359,7 +382,6 @@ def _choose_unique_cents(base_cents: int) -> int:
         used = {row[0] - base_cents for row in live}
         candidates = [c for c in range(1, 100) if c not in used]
         if not candidates:
-            # si se llenó, ya ni modo: random (puede colisionar)
             return base_cents + secrets.randbelow(99) + 1
         return base_cents + secrets.choice(candidates)
     except Exception as e:
@@ -374,33 +396,30 @@ def _transfer_public_info(amount_cents: int, reference: str):
         "clabe": TRANSFER_CLABE,
         "amount_mxn": f"{amount_cents / 100:.2f}",
         "reference": reference,
-        "concept": reference,  # útil para pegar como "Concepto" en la transferencia
+        "concept": reference,
         "ttl_minutes": TRANSFER_ORDER_TTL_MIN,
         "unique_cents": TRANSFER_USE_UNIQUE_CENTS,
     }
 
 # ============================
+# SECURITY HEADERS (simple)
+# ============================
+@app.after_request
+def add_security_headers(resp):
+    try:
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        # HSTS solo si realmente siempre va por HTTPS
+        if IS_PROD:
+            resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    except Exception:
+        pass
+    return resp
+
+# ============================
 # ROUTES
 # ============================
-
-@app.route("/admin/renew_license", methods=["POST"])
-@require_admin
-def admin_renew_license():
-    data = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-    if not username:
-        return jsonify({"error": "username requerido"}), 400
-
-    user = get_user_by_username(username)
-    if not user:
-        return jsonify({"error": "Usuario no encontrado"}), 404
-
-    extend_license(user)
-    return jsonify({
-        "message": "Licencia renovada 1 año",
-        "username": user.username,
-        "license_expiration": user.license_expiration.isoformat()
-    }), 200
 
 @app.route("/")
 def home():
@@ -419,6 +438,8 @@ def me():
         "client_id": user.client_id,
         "license_active": license_is_active(user),
         "license_expiration": user.license_expiration.isoformat() if user.license_expiration else None,
+        "server_time_utc": utcnow().isoformat(),
+        "env": ENV or "unknown",
     }), 200
 
 @app.route("/login", methods=["POST"])
@@ -447,7 +468,7 @@ def login():
     }), 200
 
 # ----------------------------
-# Admin: usuarios
+# Admin: usuarios / licencia
 # ----------------------------
 @app.route("/admin/create_user", methods=["POST"])
 @require_admin
@@ -460,8 +481,10 @@ def admin_create_user():
     if not username or not password:
         return jsonify({"error": "username y password son requeridos"}), 400
 
-    if not client_id and username.upper() in TEST_CLIENT_OVERRIDES:
+    # overrides solo fuera de prod
+    if (not IS_PROD) and (not client_id) and username.upper() in TEST_CLIENT_OVERRIDES:
         client_id = TEST_CLIENT_OVERRIDES[username.upper()]
+
     if not client_id:
         return jsonify({"error": "client_id es requerido"}), 400
 
@@ -500,6 +523,25 @@ def admin_set_user_client_id():
         db.session.rollback()
         logger.error(f"Error actualizando client_id para {username}: {e}")
         return jsonify({"error": "No se pudo actualizar client_id"}), 500
+
+@app.route("/admin/renew_license", methods=["POST"])
+@require_admin
+def admin_renew_license():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    if not username:
+        return jsonify({"error": "username requerido"}), 400
+
+    user = get_user_by_username(username)
+    if not user:
+        return jsonify({"error": "Usuario no encontrado"}), 404
+
+    extend_license(user)
+    return jsonify({
+        "message": "Licencia renovada 1 año",
+        "username": user.username,
+        "license_expiration": user.license_expiration.isoformat()
+    }), 200
 
 # ----------------------------
 # Licencia / VINs
@@ -640,13 +682,13 @@ def eliminar_ultimo_vin():
 
 # ----------------------------
 # Stripe checkout (token + fallback legacy)
+#  - Se setea metadata username para que el webhook pueda mapear usuario bien
 # ----------------------------
 @app.route("/create-checkout-session", methods=["POST"])
 def create_checkout_session():
     if not stripe.api_key or not STRIPE_PRICE_ID:
         return jsonify({"error": "Stripe no configurado en el servidor"}), 500
 
-    # 1) Preferido: auth token
     auth = request.headers.get("Authorization", "")
     user: Optional[User] = None
 
@@ -654,14 +696,13 @@ def create_checkout_session():
         token = auth.split(" ", 1)[1].strip()
         user = get_user_from_token(token)
 
-    # 2) Fallback legacy: JSON {"user": "..."} (para tu app vieja)
     if user is None and ALLOW_LEGACY_STRIPE:
         data = request.get_json(silent=True) or {}
         legacy_username = (data.get("user") or "").strip()
         if legacy_username:
             user = get_user_by_username(legacy_username)
             if user:
-                logger.warning("[LEGACY] create-checkout-session llamado sin Authorization (usando user del body).")
+                logger.warning("[LEGACY] create-checkout-session sin Authorization (usando user del body).")
 
     if user is None:
         return jsonify({"error": "Falta Authorization: Bearer <token>"}), 401
@@ -673,7 +714,9 @@ def create_checkout_session():
             mode="subscription",
             success_url=SUCCESS_URL,
             cancel_url=CANCEL_URL,
-            client_reference_id=user.username,
+            client_reference_id=user.username,  # útil, pero NO lo usamos como única fuente de verdad
+            metadata={"username": user.username},
+            subscription_data={"metadata": {"username": user.username}},
         )
         return jsonify({"url": session_obj.url}), 200
     except stripe.error.CardError as e:
@@ -681,6 +724,52 @@ def create_checkout_session():
     except Exception as e:
         logger.error(f"Error al crear checkout session: {e}")
         return jsonify({"error": str(e)}), 500
+
+def _username_from_stripe_object(obj: dict) -> str:
+    # prefer metadata.username
+    md = obj.get("metadata") or {}
+    uname = (md.get("username") or "").strip()
+    if uname:
+        return uname
+    # fallback (menos confiable): client_reference_id (solo en checkout.session)
+    uname = (obj.get("client_reference_id") or "").strip()
+    return uname
+
+def _handle_subscription_paid(subscription_id: str) -> None:
+    """
+    Recupera la subscripción en Stripe, valida status y ajusta license_expiration a current_period_end (UTC).
+    """
+    if not subscription_id:
+        return
+    try:
+        sub = stripe.Subscription.retrieve(subscription_id)
+        status = (sub.get("status") or "").lower()
+        if status not in ("active", "trialing"):
+            logger.info(f"[STRIPE] subscription {subscription_id} status={status} (no renuevo licencia).")
+            return
+
+        uname = _username_from_stripe_object(sub)
+        if not uname:
+            logger.warning(f"[STRIPE] subscription {subscription_id} sin metadata.username (no puedo mapear usuario).")
+            return
+
+        user = get_user_by_username(uname)
+        if not user:
+            logger.warning(f"[STRIPE] usuario '{uname}' no existe en DB (subscription {subscription_id}).")
+            return
+
+        cpe = sub.get("current_period_end")
+        if not cpe:
+            logger.warning(f"[STRIPE] subscription {subscription_id} sin current_period_end.")
+            return
+
+        # Stripe entrega epoch seconds UTC
+        new_exp = datetime.utcfromtimestamp(int(cpe))
+        _set_license_expiration_max(user, new_exp)
+        logger.info(f"[STRIPE] Licencia set hasta {new_exp.isoformat()} para user={uname} (sub={subscription_id}).")
+
+    except Exception as e:
+        logger.error(f"[STRIPE] Error procesando subscription {subscription_id}: {e}")
 
 @app.route("/webhook", methods=["POST"])
 def stripe_webhook():
@@ -693,17 +782,37 @@ def stripe_webhook():
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
         event_type = event.get("type", "")
-        event_data = event.get("data", {}).get("object", {})
+        obj = event.get("data", {}).get("object", {}) or {}
 
+        # 1) Checkout terminado: si es subscription, intenta leer subscription_id
         if event_type == "checkout.session.completed":
-            session = event_data
-            usuario = session.get("client_reference_id")
-            if usuario:
-                u = get_user_by_username(usuario)
-                if u:
-                    extend_license(u, days=365)
+            # OJO: session.completed puede disparar antes que invoice.paid en algunos flujos.
+            subscription_id = (obj.get("subscription") or "").strip()
+            if subscription_id:
+                _handle_subscription_paid(subscription_id)
+            else:
+                # Si fuera pago único (no es tu caso ahora), podrías validar payment_status == "paid"
+                pay_status = (obj.get("payment_status") or "").lower()
+                uname = _username_from_stripe_object(obj)
+                if pay_status == "paid" and uname:
+                    u = get_user_by_username(uname)
+                    if u:
+                        extend_license(u, days=365)
+
+        # 2) Señal fuerte: invoice pagada (recomendado para subscripciones)
+        elif event_type == "invoice.paid":
+            subscription_id = (obj.get("subscription") or "").strip()
+            if subscription_id:
+                _handle_subscription_paid(subscription_id)
+
+        # 3) Opcional: cuando cambia subscripción
+        elif event_type == "customer.subscription.updated":
+            subscription_id = (obj.get("id") or "").strip()
+            if subscription_id:
+                _handle_subscription_paid(subscription_id)
 
         return jsonify({"status": "success"}), 200
+
     except stripe.error.SignatureVerificationError as e:
         logger.error(f"Firma inválida webhook: {e}")
         return jsonify({"error": "Firma del webhook inválida"}), 400
@@ -729,7 +838,6 @@ def transfer_info():
         return jsonify({"error": "Transferencia no configurada en el servidor"}), 500
 
     base_cents = _parse_mxn_to_cents(TRANSFER_AMOUNT_MXN)
-    # aquí no generamos orden; solo mostramos el “precio base”
     return jsonify({
         "enabled": True,
         "bank_name": TRANSFER_BANK_NAME,
@@ -752,11 +860,9 @@ def transfer_create_order():
     try:
         base_cents = _parse_mxn_to_cents(TRANSFER_AMOUNT_MXN)
         amount_cents = _choose_unique_cents(base_cents)
-
-        # referencia única
         reference = _gen_reference("VDR")
+        expires_at = utcnow() + timedelta(minutes=TRANSFER_ORDER_TTL_MIN)
 
-        expires_at = datetime.now() + timedelta(minutes=TRANSFER_ORDER_TTL_MIN)
         order = TransferOrder(
             user_id=user.id,
             amount_cents=amount_cents,
@@ -767,11 +873,13 @@ def transfer_create_order():
         db.session.add(order)
         db.session.commit()
 
+        # Devuelve 200 para que cliente sea menos quisquilloso
         return jsonify({
             "order": order.to_public_dict(),
             "payment": _transfer_public_info(amount_cents=amount_cents, reference=reference),
             "notes": "Haz la transferencia con el CONCEPTO/REFERENCIA EXACTO. Después envía tu clave de rastreo.",
-        }), 201
+        }), 200
+
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error creando orden transferencia: {e}")
@@ -805,7 +913,7 @@ def transfer_submit():
     if order.status in ("approved", "rejected", "expired"):
         return jsonify({"error": f"No puedes enviar comprobante. Estado actual: {order.status}"}), 400
 
-    if order.expires_at < datetime.now():
+    if order.expires_at < utcnow():
         order.status = "expired"
         db.session.commit()
         return jsonify({"error": "La orden expiró. Crea una nueva."}), 400
@@ -890,9 +998,15 @@ def admin_transfer_reject():
 # ----------------------------
 # Updates endpoint (si lo usas)
 # ----------------------------
+ENABLE_UPDATES_ENDPOINT = (os.getenv("ENABLE_UPDATES_ENDPOINT", "0").strip().lower() in ("1", "true", "yes"))
+
 @app.route("/check_updates", methods=["GET"])
 @require_admin
 def check_updates():
+    if not ENABLE_UPDATES_ENDPOINT:
+        # No expongas esto en prod salvo que sepas exactamente por qué lo quieres.
+        return jsonify({"error": "Endpoint deshabilitado"}), 404
+
     def generate():
         try:
             yield "data: Configurando repositorio de actualizaciones...\n\n"
@@ -907,7 +1021,10 @@ def check_updates():
 
     return Response(generate(), mimetype="text/event-stream")
 
+# ============================
+# MAIN (solo dev/local)
+# ============================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    logger.info(f"Iniciando servidor en el puerto {port} (DEBUG={app.config['DEBUG']})")
+    logger.info(f"Iniciando servidor en el puerto {port} (DEBUG={app.config['DEBUG']}, ENV={ENV})")
     app.run(host="0.0.0.0", port=port)
