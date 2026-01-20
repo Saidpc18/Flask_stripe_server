@@ -395,7 +395,7 @@ def admin_renew_license():
     if not user:
         return jsonify({"error": "Usuario no encontrado"}), 404
 
-    renew_license(user)
+    extend_license(user)
     return jsonify({
         "message": "Licencia renovada 1 año",
         "username": user.username,
