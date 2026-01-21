@@ -154,7 +154,7 @@ def utcnow() -> datetime:
 class User(db.Model):
     __tablename__ = "usuarios"
 
-    id = db.Column(db.Integer, primary_key=True)
+    id = db.Column(db.String(36), primary_key=True)  # o el largo que uses
     username = db.Column(db.String(50), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
     client_id = db.Column(db.String(50), nullable=False)
@@ -196,24 +196,43 @@ class YearSequence(db.Model):
 class TransferOrder(db.Model):
     __tablename__ = "transfer_orders"
 
-    id = db.Column(db.Integer, primary_key=True)
+    # OJO: en la DB ES VARCHAR
+    id = db.Column(db.String, primary_key=True)
+
     user_id = db.Column(db.Integer, db.ForeignKey("usuarios.id"), nullable=False)
 
-    amount_cents = db.Column(db.Integer, nullable=False)
-    reference = db.Column(db.String(64), nullable=False, unique=True)
+    # En la DB existe amount_mxn y currency
+    amount_mxn = db.Column(db.Numeric, nullable=False)
+    currency = db.Column(db.String, nullable=False)
 
+    reference = db.Column(db.String(64), nullable=False, unique=True)
     status = db.Column(db.String(20), nullable=False, default="pending")
     tracking_key = db.Column(db.String(128), nullable=True)
 
-    created_at = db.Column(db.DateTime, default=db.func.now())
-    expires_at = db.Column(db.DateTime, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now())
+    expires_at = db.Column(db.DateTime, nullable=True)
+
+    submitted_at = db.Column(db.DateTime, nullable=True)
+    confirmed_at = db.Column(db.DateTime, nullable=True)
+    validated_by = db.Column(db.String, nullable=True)
+    validation_note = db.Column(db.String, nullable=True)
+    cep_folio = db.Column(db.String, nullable=True)
+
+    # La DB lo tiene como nullable
+    amount_cents = db.Column(db.Integer, nullable=True)
 
     def to_public_dict(self):
+        # Si amount_cents está, úsalo. Si no, calcúlalo desde amount_mxn
+        if self.amount_cents is not None:
+            amount_mxn_str = f"{self.amount_cents / 100:.2f}"
+        else:
+            amount_mxn_str = f"{Decimal(self.amount_mxn):.2f}"
+
         return {
             "order_id": self.id,
             "reference": self.reference,
             "status": self.status,
-            "amount_mxn": f"{self.amount_cents / 100:.2f}",
+            "amount_mxn": amount_mxn_str,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "tracking_key": self.tracking_key,
