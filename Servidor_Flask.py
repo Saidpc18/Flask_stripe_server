@@ -151,10 +151,14 @@ def utcnow() -> datetime:
 # ============================
 # MODELOS
 # ============================
-class User(db.Model):
+
+class Usuario(db.Model):
     __tablename__ = "usuarios"
 
-    id = db.Column(db.Integer, primary_key=True)    # o el largo que uses
+    # asegúrate de que esto sea Integer si tu DB tiene usuarios_id_seq
+    id = db.Column(db.Integer, primary_key=True)
+
+    id = db.Column(db.Integer, primary_key=True)  # o el largo que uses
     username = db.Column(db.String(50), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
     client_id = db.Column(db.String(50), nullable=False)
@@ -165,17 +169,11 @@ class User(db.Model):
 
     vins = db.relationship("VIN", backref="owner", lazy=True)
 
-class Usuario(db.Model):
-    __tablename__ = "usuarios"
-
-    # asegúrate de que esto sea Integer si tu DB tiene usuarios_id_seq
-    id = db.Column(db.Integer, primary_key=True)
-
-    # ... tus demás columnas ...
-
     # ✅ Opción A: re-agregar columnas existentes en DB
     last_year = db.Column(db.Integer, nullable=True)
     secuencial = db.Column(db.Integer, nullable=True)
+
+User = Usuario
 
 class VIN(db.Model):
     __tablename__ = "VIN"
