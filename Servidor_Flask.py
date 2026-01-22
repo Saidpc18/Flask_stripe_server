@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 from typing import Optional
 from decimal import Decimal, ROUND_HALF_UP
-
+from uuid import uuid4
 import bcrypt
 import pandas as pd
 import stripe
@@ -157,8 +157,6 @@ class Usuario(db.Model):
 
     # asegúrate de que esto sea Integer si tu DB tiene usuarios_id_seq
     id = db.Column(db.Integer, primary_key=True)
-
-    id = db.Column(db.Integer, primary_key=True)  # o el largo que uses
     username = db.Column(db.String(50), unique=True, nullable=False)
     password = db.Column(db.String(200), nullable=False)
     client_id = db.Column(db.String(50), nullable=False)
@@ -893,8 +891,11 @@ def transfer_create_order():
         expires_at = utcnow() + timedelta(minutes=TRANSFER_ORDER_TTL_MIN)
 
         order = TransferOrder(
+            id=str(uuid4()),  # <-- genera PK
             user_id=user.id,
             amount_cents=amount_cents,
+            amount_mxn=Decimal(amount_cents) / Decimal(100),  # <-- NOT NULL
+            currency="MXN",  # <-- NOT NULL
             reference=reference,
             status="pending",
             expires_at=expires_at,
