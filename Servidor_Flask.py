@@ -891,17 +891,16 @@ def transfer_create_order():
         expires_at = utcnow() + timedelta(minutes=TRANSFER_ORDER_TTL_MIN)
 
         order = TransferOrder(
-            id=str(uuid4()),  # <-- genera PK
+            id=str(uuid4()),
             user_id=user.id,
             amount_cents=amount_cents,
-            amount_mxn=Decimal(amount_cents) / Decimal(100),  # <-- NOT NULL
-            currency="MXN",  # <-- NOT NULL
+            amount_mxn=Decimal(amount_cents) / Decimal(100),
+            currency="MXN",
             reference=reference,
             status="pending",
+            created_at=utcnow(),  # ✅ CLAVE
             expires_at=expires_at,
         )
-        db.session.add(order)
-        db.session.commit()
 
         # Devuelve 200 para que cliente sea menos quisquilloso
         return jsonify({
