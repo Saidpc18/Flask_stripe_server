@@ -23,6 +23,8 @@ from flask import Flask, request, jsonify, send_file, Response
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 import subprocess
+from sqlalchemy.exc import IntegrityError
+
 
 # ============================
 # APP
@@ -886,33 +888,43 @@ def transfer_create_order():
     user = request.current_user
     try:
         base_cents = _parse_mxn_to_cents(TRANSFER_AMOUNT_MXN)
-        amount_cents = _choose_unique_cents(base_cents)
-        reference = _gen_reference("VDR")
-        expires_at = utcnow() + timedelta(minutes=TRANSFER_ORDER_TTL_MIN)
 
-        order = TransferOrder(
-            id=str(uuid4()),
-            user_id=user.id,
-            amount_cents=amount_cents,
-            amount_mxn=Decimal(amount_cents) / Decimal(100),
-            currency="MXN",
-            reference=reference,
-            status="pending",
-            created_at=utcnow(),  # ✅ CLAVE
-            expires_at=expires_at,
-        )
+        for _ in range(5):  # hasta 5 intentos por colisión
+            amount_cents = _choose_unique_cents(base_cents)
+            reference = _gen_reference("VDR")
+            expires_at = utcnow() + timedelta(minutes=TRANSFER_ORDER_TTL_MIN)
 
-        # Devuelve 200 para que cliente sea menos quisquilloso
-        return jsonify({
-            "order": order.to_public_dict(),
-            "payment": _transfer_public_info(amount_cents=amount_cents, reference=reference),
-            "notes": "Haz la transferencia con el CONCEPTO/REFERENCIA EXACTO. Después envía tu clave de rastreo.",
-        }), 200
+            order = TransferOrder(
+                id=str(uuid4()),
+                user_id=user.id,
+                amount_cents=amount_cents,
+                amount_mxn=Decimal(amount_cents) / Decimal(100),
+                currency="MXN",
+                reference=reference,
+                status="pending",
+                created_at=utcnow(),
+                expires_at=expires_at,
+            )
+
+            try:
+                db.session.add(order)
+                db.session.commit()
+                return jsonify({
+                    "order": order.to_public_dict(),
+                    "payment": _transfer_public_info(amount_cents=amount_cents, reference=reference),
+                    "notes": "Haz la transferencia con el CONCEPTO/REFERENCIA EXACTO. Después envía tu clave de rastreo.",
+                }), 200
+            except IntegrityError:
+                db.session.rollback()
+                continue  # reintentar con otra reference/cents
+
+        return jsonify({"error": "No se pudo generar una referencia única, intenta de nuevo"}), 500
 
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error creando orden transferencia: {e}")
         return jsonify({"error": "No se pudo crear la orden de transferencia"}), 500
+
 
 @app.route("/transfer/my-orders", methods=["GET"])
 @require_auth
@@ -939,7 +951,7 @@ def transfer_submit():
     if not order:
         return jsonify({"error": "Orden no encontrada"}), 404
 
-    if order.status in ("approved", "rejected", "expired"):
+    if order.status in ("approved", "confirmed", "rejected", "expired"):
         return jsonify({"error": f"No puedes enviar comprobante. Estado actual: {order.status}"}), 400
 
     if order.expires_at < utcnow():
@@ -981,7 +993,7 @@ def admin_transfer_approve():
     if not order:
         return jsonify({"error": "Orden no encontrada"}), 404
 
-    if order.status == "approved":
+    if order.status in ("approved", "confirmed"):
         return jsonify({"message": "Ya estaba aprobada", "order": order.to_public_dict()}), 200
 
     if order.status in ("rejected", "expired"):
@@ -1017,7 +1029,7 @@ def admin_transfer_reject():
     if not order:
         return jsonify({"error": "Orden no encontrada"}), 404
 
-    if order.status in ("approved", "expired"):
+    if order.status in ("approved", "confirmed", "expired"):
         return jsonify({"error": f"No se puede rechazar. Estado: {order.status}"}), 400
 
     order.status = "rejected"
