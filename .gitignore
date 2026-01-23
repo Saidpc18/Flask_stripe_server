@@ -22,12 +22,41 @@ root.json
 __pycache__/
 *.pyc
 *.spec
+
 # --- logs ---
 *.log
+*.db
+*.dump
+*.sqlite
+*.bak
+
 # --- IDE / packaging ---
+.idea/
+.vscode/
+
 # --- OS ---
 .DS_Store
 Thumbs.db
 dist/
 build/
 .idea/
+
+# --- PyInstaller ---
+build/
+dist/
+*.spec
+
+
+# --- Local tools scripts (opcionales) ---
+check_*.py
+inspect_*.py
+dedupe_*.py
+count_*.py
+add_unique_vin.py
+
+# --- Client packaging stuff (NO en servidor) ---
+clients/
+PACKAGE_*/
+Vinder-updates/
+root.json
+
