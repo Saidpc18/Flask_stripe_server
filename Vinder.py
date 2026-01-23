@@ -1,10 +1,22 @@
+# Vinder.py — Cliente (PRODUCCIÓN) actualizado + SINCRONIZACIÓN DE VINs
+# Incluye:
+# - Cola local de VINs pendientes (AppData/Local/Vinder/pending_vins.json)
+# - Si falla /guardar_vin: NO se pierde el VIN (se copia al portapapeles + se guarda en pendientes)
+# - Botón "Sincronizar VINs pendientes (N)" para reintentar subirlos al servidor
+# - Auto-sync silencioso al iniciar sesión (si hay pendientes)
+
 import os
 import sys
 import logging
 import json
 import threading
-import requests
 import webbrowser
+from typing import Optional
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 from tkinter import messagebox, filedialog
@@ -38,18 +50,36 @@ logger = logging.getLogger(__name__)
 # CONFIG UPDATER (GITHUB PAGES)
 # ============================
 APP_NAME = "Vinder"
-APP_VERSION = "0.0.0"  # <<--- CAMBIA ESTO cuando saques una versión real (ej: "0.0.2")
+APP_VERSION = "0.0.0"  # <-- CAMBIA ESTO al generar releases (ej: "0.0.7")
 
 METADATA_BASE_URL = "https://saidpc18.github.io/Vinder-updates/metadata/"
 TARGET_BASE_URL = "https://saidpc18.github.io/Vinder-updates/targets/"
 
 # ============================
-# BACKEND API
+# BACKEND API (RAILWAY)
 # ============================
-API_BASE = "https://flask-stripe-server.onrender.com"
+DEFAULT_API_BASE = "https://flaskstripeserver-production.up.railway.app"
 
-# En producción, normalmente quitas "Crear cuenta" del cliente y creas usuarios vía admin.
-ALLOW_CLIENT_REGISTER = True
+# PRO: en el .exe (frozen) IGNORA variables de entorno para evitar errores.
+# En dev (no frozen) sí permite override con VINDER_API_BASE.
+if getattr(sys, "frozen", False):
+    API_BASE = DEFAULT_API_BASE.rstrip("/")
+else:
+    API_BASE = (os.getenv("VINDER_API_BASE") or DEFAULT_API_BASE).rstrip("/")
+
+logger.info(f"[CONFIG] API_BASE={API_BASE}")
+
+# En producción normalmente NO registras desde el cliente
+ALLOW_CLIENT_REGISTER = os.getenv("VINDER_ALLOW_REGISTER", "0").strip() == "1"
+
+# Modo de pago visible en UI: "stripe" | "transfer" | "both"
+PAYMENT_MODE = os.getenv("VINDER_PAYMENT_MODE", "both").strip().lower()
+if PAYMENT_MODE not in ("stripe", "transfer", "both"):
+    PAYMENT_MODE = "stripe"
+
+# HTTP tuning
+HTTP_TIMEOUT = float(os.getenv("VINDER_HTTP_TIMEOUT", "25"))
+HTTP_VERIFY_SSL = os.getenv("VINDER_HTTP_VERIFY_SSL", "1").strip().lower() in ("1", "true", "yes")
 
 
 # ============================
@@ -77,14 +107,37 @@ def app_install_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def tuf_cache_dir() -> str:
+def app_data_dir() -> str:
     """
-    Carpeta de cache del updater en AppData Local.
+    Carpeta estable en AppData Local para guardar settings/cola (NO se borra con updates).
     """
     base = os.environ.get("LOCALAPPDATA")
     if not base:
         base = os.path.join(os.path.expanduser("~"), "AppData", "Local")
-    return os.path.join(base, APP_NAME, "tufup")
+    d = os.path.join(base, APP_NAME)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def tuf_cache_dir() -> str:
+    """
+    Carpeta de cache del updater en AppData Local.
+    """
+    return os.path.join(app_data_dir(), "tufup")
+
+
+# ============================
+# COLA LOCAL DE VINs (pendientes)
+# ============================
+def pending_vins_path() -> str:
+    return os.path.join(app_data_dir(), "pending_vins.json")
+
+
+def _atomic_write_json(path: str, data) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
 
 
 # ============================
@@ -121,17 +174,11 @@ def load_client_by_id(client_id: str) -> dict:
     for cfg in list_clients():
         if cfg.get("client_id") == client_id:
             return cfg
-    raise KeyError(
-        f"Cliente no encontrado: {client_id}. Asegúrate de tener clients/{client_id}.json"
-    )
+    raise KeyError(f"Cliente no encontrado: {client_id}. Asegúrate de tener clients/{client_id}.json")
 
 
 def settings_path() -> str:
-    base = os.environ.get("LOCALAPPDATA")
-    if not base:
-        base = os.path.join(os.path.expanduser("~"), "AppData", "Local")
-    os.makedirs(os.path.join(base, APP_NAME), exist_ok=True)
-    return os.path.join(base, APP_NAME, "settings.json")
+    return os.path.join(app_data_dir(), "settings.json")
 
 
 def load_settings() -> dict:
@@ -164,8 +211,8 @@ def ensure_root_json_in_cache() -> str:
         return dst_root
 
     src_root_candidates = [
-        resource_path("root.json"),
-        os.path.join(app_install_dir(), "root.json"),
+        resource_path("root.json"),                  # dentro de PyInstaller (_MEIPASS) si lo empaquetas
+        os.path.join(app_install_dir(), "root.json") # junto al .exe (recomendado para producción)
     ]
 
     src_root = None
@@ -177,8 +224,10 @@ def ensure_root_json_in_cache() -> str:
     if not src_root:
         raise FileNotFoundError(
             "No se encontró root.json.\n\n"
-            "En modo desarrollo, pon root.json junto a Vinder.py.\n"
-            "Ruta esperada: " + resource_path("root.json")
+            "PRODUCCIÓN: coloca root.json junto al .exe:\n"
+            f"  {os.path.join(app_install_dir(), 'root.json')}\n\n"
+            "DEV: coloca root.json junto a Vinder.py:\n"
+            f"  {resource_path('root.json')}"
         )
 
     with open(src_root, "rb") as fsrc, open(dst_root, "wb") as fdst:
@@ -217,7 +266,7 @@ def make_tufup_client() -> "TufupClient":
 
 
 # ============================
-# FUNCIONES PARA ICONO
+# FUNCIONES PARA ICONO / UI
 # ============================
 def set_icon(window, logo_small=None):
     try:
@@ -270,9 +319,12 @@ class VinderApp:
         self.last_conversion_details = ""
 
         # ====== auth/session ======
-        self.usuario_actual: str | None = None
-        self.auth_token: str | None = None
-        self.client_id: str | None = None
+        self.usuario_actual: Optional[str] = None
+        self.auth_token: Optional[str] = None
+        self.client_id: Optional[str] = None
+
+        # ====== requests session (retries) ======
+        self.http = self._make_http_session()
 
         # ====== cliente/catálogos ======
         self.clients = list_clients()
@@ -290,7 +342,7 @@ class VinderApp:
         self.catalogs: dict = {}
         self.fixed_12_14 = "098"
 
-        # Variables de estado
+        # Variables de estado (catálogos)
         self.var_wmi = tb.StringVar(value="")
         self.var_c4 = tb.StringVar()
         self.var_c5 = tb.StringVar()
@@ -302,6 +354,7 @@ class VinderApp:
 
         # UI references
         self.btn_generate = None
+        self.btn_sync = None
 
         # Frame principal
         self.main_frame = tb.Frame(self.master, padding=0)
@@ -311,6 +364,194 @@ class VinderApp:
         self._build_menubar()
 
         self.mostrar_ventana_inicio()
+
+    # ----------------------------
+    # HTTP robusto
+    # ----------------------------
+    def _make_http_session(self) -> requests.Session:
+        s = requests.Session()
+        s.verify = HTTP_VERIFY_SSL
+        s.headers.update({
+            "User-Agent": f"Vinder/{APP_VERSION} (+desktop)",
+            "Accept": "application/json, text/plain, */*",
+        })
+
+        retry = Retry(
+            total=3,
+            connect=3,
+            read=3,
+            backoff_factor=0.6,
+            status_forcelist=(429, 502, 503, 504),
+            allowed_methods=("GET", "POST", "PUT", "PATCH", "DELETE"),
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry, pool_connections=10, pool_maxsize=10)
+        s.mount("https://", adapter)
+        s.mount("http://", adapter)
+        return s
+
+    def auth_headers(self) -> dict:
+        if not self.auth_token:
+            return {}
+        return {"Authorization": f"Bearer {self.auth_token}"}
+
+    def _safe_json(self, resp: requests.Response) -> dict:
+        try:
+            return resp.json()
+        except Exception:
+            return {}
+
+    def _handle_unauthorized(self, resp: requests.Response) -> bool:
+        if resp.status_code == 401:
+            err = self._safe_json(resp).get("error", "Sesión expirada o no autorizada")
+            self.master.after(0, lambda: messagebox.showerror("Sesión expirada", err))
+            self.master.after(0, self.cerrar_sesion)
+            return True
+        return False
+
+    def _req(self, method: str, path: str, *, headers=None, json_body=None, timeout=None) -> requests.Response:
+        url = f"{API_BASE}{path}"
+        h = {}
+        if headers:
+            h.update(headers)
+        t = timeout if timeout is not None else HTTP_TIMEOUT
+        return self.http.request(method, url, headers=h, json=json_body, timeout=t)
+
+    # ----------------------------
+    # Cola local VINs pendientes
+    # ----------------------------
+    def _load_pending_vins(self) -> list[str]:
+        path = pending_vins_path()
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, list):
+                return []
+            out = []
+            for x in data:
+                s = str(x).strip().upper()
+                if s:
+                    out.append(s)
+            # dedup manteniendo orden
+            seen = set()
+            dedup = []
+            for v in out:
+                if v not in seen:
+                    seen.add(v)
+                    dedup.append(v)
+            return dedup
+        except Exception:
+            return []
+
+    def _save_pending_vins(self, vins: list[str]) -> None:
+        # normaliza + dedup
+        seen = set()
+        out = []
+        for v in vins:
+            v = (v or "").strip().upper()
+            if not v:
+                continue
+            if v in seen:
+                continue
+            seen.add(v)
+            out.append(v)
+        try:
+            _atomic_write_json(pending_vins_path(), out)
+        except Exception:
+            try:
+                with open(pending_vins_path(), "w", encoding="utf-8") as f:
+                    json.dump(out, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+    def _queue_pending_vin(self, vin: str) -> None:
+        vin = (vin or "").strip().upper()
+        if not vin:
+            return
+        pending = self._load_pending_vins()
+        pending.append(vin)
+        self._save_pending_vins(pending)
+
+    def pending_vins_count(self) -> int:
+        return len(self._load_pending_vins())
+
+    def _refresh_sync_button(self):
+        if self.btn_sync is not None:
+            try:
+                self.btn_sync.configure(text=f"Sincronizar VINs pendientes ({self.pending_vins_count()})")
+            except Exception:
+                pass
+
+    def sync_pending_vins(self, show_ui: bool = True) -> None:
+        """
+        Reintenta guardar VINs pendientes en el servidor.
+        - NO borra localmente un VIN hasta que el servidor responda OK.
+        - Si token expira (401), se detiene.
+        """
+        pending = self._load_pending_vins()
+        if not pending:
+            if show_ui:
+                self.master.after(0, lambda: messagebox.showinfo("Sincronizar", "No hay VINs pendientes."))
+            self.master.after(0, self._refresh_sync_button)
+            return
+
+        if not self.auth_token:
+            if show_ui:
+                self.master.after(0, lambda: messagebox.showerror("Error", "Inicia sesión para sincronizar VINs."))
+            return
+
+        ok = 0
+        still: list[str] = []
+
+        for vin in pending:
+            try:
+                resp = self._req(
+                    "POST",
+                    "/guardar_vin",
+                    headers=self.auth_headers(),
+                    json_body={"vin_completo": vin},
+                    timeout=20,
+                )
+
+                if self._handle_unauthorized(resp):
+                    # deja vin actual y el resto como pendientes
+                    still.append(vin)
+                    idx = pending.index(vin)
+                    still.extend(pending[idx + 1 :])
+                    break
+
+                if resp.status_code == 200:
+                    ok += 1
+                else:
+                    still.append(vin)
+
+            except Exception:
+                still.append(vin)
+
+        self._save_pending_vins(still)
+
+        def finish_ui():
+            self._refresh_sync_button()
+            if show_ui:
+                messagebox.showinfo("Sincronizar", f"Sincronizados: {ok}\nPendientes: {len(still)}")
+            # status bar
+            if len(still) > 0:
+                self.status_var.set(f"Sincronización completa. Pendientes: {len(still)}")
+            else:
+                self.status_var.set("Sincronización completa. No hay pendientes.")
+
+        self.master.after(0, finish_ui)
+
+    def sync_pending_vins_async(self, show_ui: bool = True) -> None:
+        def worker():
+            try:
+                self.sync_pending_vins(show_ui=show_ui)
+            except Exception as e:
+                if show_ui:
+                    self.master.after(0, lambda: messagebox.showerror("Error", f"No se pudo sincronizar: {e}"))
+        threading.Thread(target=worker, daemon=True).start()
 
     # ----------------------------
     # Helpers UI
@@ -332,12 +573,12 @@ class VinderApp:
     def _copy_to_clipboard(self, text: str):
         t = (text or "").strip()
         if not t:
-            self._toast("No hay VIN para copiar", bootstyle="warning")
+            self._toast("No hay datos para copiar", bootstyle="warning")
             return
         try:
             self.master.clipboard_clear()
             self.master.clipboard_append(t)
-            self._toast("VIN copiado al portapapeles", bootstyle="success")
+            self._toast("Copiado al portapapeles", bootstyle="success")
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo copiar: {e}")
 
@@ -367,21 +608,10 @@ class VinderApp:
             messagebox.showerror("Error", f"No se pudo cambiar tema: {e}")
 
     def _about_dialog(self):
-        messagebox.showinfo("Vinder", f"Vinder\nVersión: {APP_VERSION}")
-
-    # ----------------------------
-    # Helpers HTTP
-    # ----------------------------
-    def auth_headers(self) -> dict:
-        if not self.auth_token:
-            return {}
-        return {"Authorization": f"Bearer {self.auth_token}"}
-
-    def _safe_json(self, resp: requests.Response) -> dict:
-        try:
-            return resp.json()
-        except Exception:
-            return {}
+        messagebox.showinfo(
+            "Vinder",
+            f"Vinder\n\nVersión: {APP_VERSION}\nAPI: {API_BASE}\n\n(c) Vinder",
+        )
 
     # ----------------------------
     # Logo
@@ -409,18 +639,10 @@ class VinderApp:
         catalogs = cfg.get("catalogs", {})
         defaults = cfg.get("defaults", {})
 
-        self.var_wmi.set(defaults.get("wmi", self.var_wmi.get() or ""))
+        self.var_wmi.set((defaults.get("wmi") or self.var_wmi.get() or "").upper()[:3])
         self.fixed_12_14 = defaults.get("fixed_12_14", "098")
 
-        required = [
-            "posicion_4",
-            "posicion_5",
-            "posicion_6",
-            "posicion_7",
-            "posicion_8",
-            "posicion_10",
-            "posicion_11",
-        ]
+        required = ["posicion_4", "posicion_5", "posicion_6", "posicion_7", "posicion_8", "posicion_10", "posicion_11"]
         missing = [k for k in required if k not in catalogs or not isinstance(catalogs[k], dict) or not catalogs[k]]
         if missing:
             raise ValueError(f"El cliente '{client_id}' no trae catálogos válidos: {missing}")
@@ -453,27 +675,25 @@ class VinderApp:
             try:
                 client = make_tufup_client()
                 info = client.check_for_updates()
-                logger.info(f"[UPDATER] check_for_updates() returned: {info!r}")
+                logger.info(f"[UPDATER] check_for_updates() => {info!r}")
 
-                has_update = info is not None
+                has_update = info is not None and info is not False
                 target_path = None
                 new_version = None
 
-                if has_update and hasattr(info, "target_path"):
+                # tolerante a distintas versiones de tufup
+                if hasattr(info, "target_path"):
                     target_path = getattr(info, "target_path", None)
+                if hasattr(info, "new_version"):
+                    new_version = getattr(info, "new_version", None)
 
                 if isinstance(info, dict):
-                    has_update = bool(info.get("available", info.get("new_version", info.get("target_path"))))
-                    new_version = info.get("new_version")
-                    target_path = target_path or info.get("target_path")
-
-                if isinstance(info, str):
+                    has_update = bool(info.get("available", info.get("new_version") or info.get("target_path")))
+                    new_version = info.get("new_version") or new_version
+                    target_path = info.get("target_path") or target_path
+                elif isinstance(info, str):
                     has_update = True
-                    target_path = info if (".tar" in info or ".zip" in info) else None
-                    new_version = None if target_path else info
-
-                if isinstance(info, bool):
-                    has_update = info
+                    new_version = info
 
                 self.master.after(0, bar.stop)
                 self.master.after(0, progress_window.destroy)
@@ -509,6 +729,7 @@ class VinderApp:
 
                     def do_apply():
                         try:
+                            # distintas firmas
                             try:
                                 client.download_and_apply_update(info)
                             except TypeError:
@@ -516,13 +737,7 @@ class VinderApp:
 
                             self.master.after(0, bar2.stop)
                             self.master.after(0, pw2.destroy)
-                            self.master.after(
-                                0,
-                                lambda: messagebox.showinfo(
-                                    "Actualización",
-                                    "Actualización aplicada.\n\nCierra y vuelve a abrir la aplicación.",
-                                ),
-                            )
+                            self.master.after(0, lambda: messagebox.showinfo("Actualización", "Actualización aplicada.\n\nCierra y vuelve a abrir la aplicación."))
                         except Exception as e:
                             self.master.after(0, bar2.stop)
                             self.master.after(0, pw2.destroy)
@@ -540,73 +755,222 @@ class VinderApp:
         threading.Thread(target=worker, daemon=True).start()
 
     # ----------------------------
-    # MÉTODOS PARA LLAMADAS AL SERVIDOR (TOKEN)
+    # LICENCIA (usa /me)
     # ----------------------------
-    def iniciar_pago(self):
-        if not self.usuario_actual:
-            messagebox.showerror("Error", "Inicia sesión para realizar el pago.")
+    def verificar_licencia(self, show_ui: bool = True) -> bool:
+        if not self.auth_token:
+            if show_ui:
+                messagebox.showerror("Error", "Sesión inválida. Vuelve a iniciar sesión.")
+            return False
+        try:
+            resp = self._req("GET", "/me", headers=self.auth_headers(), timeout=20)
+            if self._handle_unauthorized(resp):
+                return False
+            if resp.status_code != 200:
+                err = self._safe_json(resp).get("error", f"HTTP {resp.status_code}")
+                if show_ui:
+                    messagebox.showerror("Error", f"No se pudo consultar estado de licencia: {err}")
+                return False
+
+            data = self._safe_json(resp) or {}
+            active = bool(data.get("license_active"))
+            if active:
+                return True
+
+            if show_ui:
+                exp = data.get("license_expiration")
+                msg = "Licencia requerida o expirada."
+                if exp:
+                    msg += f"\n\nExpiración: {exp}"
+                messagebox.showerror("Suscripción requerida", msg)
+            return False
+
+        except requests.RequestException as e:
+            if show_ui:
+                messagebox.showerror("Error", f"No se pudo verificar la licencia: {e}")
+            return False
+
+    # ----------------------------
+    # PAGO (Stripe) — requiere Bearer token
+    # ----------------------------
+    def iniciar_pago_stripe(self):
+        if not self.usuario_actual or not self.auth_token:
+            messagebox.showerror("Error", "Sesión inválida. Vuelve a iniciar sesión.")
             return
         try:
-            url = f"{API_BASE}/create-checkout-session"
-            resp = requests.post(url, json={"user": self.usuario_actual}, timeout=30)
+            resp = self._req("POST", "/create-checkout-session", headers=self.auth_headers(), json_body={}, timeout=30)
+            if self._handle_unauthorized(resp):
+                return
+
             if resp.status_code == 200:
                 data = self._safe_json(resp)
-                url_pago = data.get("url", "")
+                url_pago = (data.get("url") or "").strip()
                 if url_pago:
                     webbrowser.open(url_pago)
                     messagebox.showinfo("Pago Iniciado", "Se abrió la página de pago en tu navegador.")
                 else:
                     messagebox.showerror("Error", "No se recibió una URL válida del servidor.")
             else:
-                err = self._safe_json(resp).get("error", "Error desconocido")
+                err = self._safe_json(resp).get("error", f"HTTP {resp.status_code}")
                 messagebox.showerror("Error", f"No se pudo iniciar el proceso de pago: {err}")
+
         except requests.RequestException as e:
             messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
 
-    def verificar_licencia(self, show_ui: bool = True) -> bool:
-        """
-        show_ui=False: no muestra messagebox (útil en threads), solo devuelve bool.
-        """
+    # ----------------------------
+    # TRANSFERENCIA (flujo producción)
+    # - /transfer/create-order devuelve 200/201 con order + payment
+    # - opcional: submit tracking_key (/transfer/submit)
+    # ----------------------------
+    def iniciar_transferencia(self):
         if not self.auth_token:
-            if show_ui:
-                messagebox.showerror("Error", "Sesión inválida. Vuelve a iniciar sesión.")
-            return False
+            messagebox.showerror("Error", "Sesión inválida. Vuelve a iniciar sesión.")
+            return
+
         try:
-            url = f"{API_BASE}/funcion-principal"
-            resp = requests.get(url, headers=self.auth_headers(), timeout=20)
-            data = self._safe_json(resp)
+            resp = self._req("POST", "/transfer/create-order", headers=self.auth_headers(), json_body={}, timeout=25)
+            if self._handle_unauthorized(resp):
+                return
 
-            if resp.status_code == 200:
-                return True
+            data = self._safe_json(resp) or {}
 
-            msg = data.get("error", "Suscripción requerida.")
-            if show_ui:
-                messagebox.showerror("Suscripción requerida", msg)
-            return False
+            if resp.status_code == 404:
+                messagebox.showinfo("Transferencia", "El servidor no tiene habilitado el flujo de transferencia.")
+                return
+
+            if resp.status_code not in (200, 201):
+                err = data.get("error", f"HTTP {resp.status_code}")
+                messagebox.showerror("Error", f"No se pudo crear la orden de transferencia: {err}")
+                return
+
+            order = data.get("order") or {}
+            pay = data.get("payment") or {}
+
+            reference = (pay.get("reference") or order.get("reference") or "").strip()
+            amount_mxn = str(pay.get("amount_mxn") or order.get("amount_mxn") or "").strip()
+            expires_at = (order.get("expires_at") or "").strip()
+
+            bank_name = (pay.get("bank_name") or "").strip()
+            beneficiary = (pay.get("beneficiary_name") or "").strip()
+            clabe = (pay.get("clabe") or "").strip()
+            concept = (pay.get("concept") or reference).strip()
+
+            notes = (data.get("notes") or "").strip()
+
+            self._transfer_order_popup(
+                reference=reference,
+                amount_mxn=amount_mxn,
+                expires_at=expires_at,
+                bank_name=bank_name,
+                beneficiary=beneficiary,
+                clabe=clabe,
+                concept=concept,
+                notes=notes,
+            )
+
         except requests.RequestException as e:
-            if show_ui:
-                messagebox.showerror("Error", f"No se pudo verificar la licencia: {e}")
-            return False
+            messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
 
-    def guardar_vin_en_flask(self, vin_data: dict, show_ui: bool = True) -> bool:
+    def _transfer_order_popup(
+        self,
+        *,
+        reference: str,
+        amount_mxn: str,
+        expires_at: str,
+        bank_name: str,
+        beneficiary: str,
+        clabe: str,
+        concept: str,
+        notes: str = "",
+    ):
+        w = tb.Toplevel(self.master)
+        w.title("Pago por Transferencia")
+        set_icon(w, self.logo_photo_small)
+        center_window(w, 820, 520)
+        w.transient(self.master)
+        w.grab_set()
+
+        txt = (
+            "INSTRUCCIONES DE TRANSFERENCIA\n\n"
+            f"Banco: {bank_name or '-'}\n"
+            f"Beneficiario: {beneficiary or '-'}\n"
+            f"CLABE: {clabe or '-'}\n\n"
+            f"Monto (MXN): {amount_mxn or '-'}\n"
+            f"Referencia / Concepto: {concept or reference or '-'}\n"
+            f"Vence: {expires_at or '-'}\n\n"
+            "IMPORTANTE:\n"
+            "- Usa EXACTAMENTE la referencia/concepto.\n"
+            "- Si tu banco pregunta 'concepto', pega la referencia.\n"
+        )
+        if notes:
+            txt += f"\nNotas:\n- {notes}\n"
+
+        st = ScrolledText(w, wrap="word", font=("Consolas", 11))
+        st.pack(fill="both", expand=True, padx=12, pady=12)
+        st.insert("end", txt)
+        st.configure(state="disabled")
+
+        frm = tb.Frame(w, padding=(12, 0))
+        frm.pack(fill="x", pady=(0, 10))
+
+        tb.Button(frm, text="Copiar CLABE", bootstyle="secondary", command=lambda: self._copy_to_clipboard(clabe)).pack(side="left", padx=5)
+        tb.Button(frm, text="Copiar Monto", bootstyle="secondary", command=lambda: self._copy_to_clipboard(amount_mxn)).pack(side="left", padx=5)
+        tb.Button(frm, text="Copiar Referencia", bootstyle="secondary", command=lambda: self._copy_to_clipboard(concept or reference)).pack(side="left", padx=5)
+
+        submit_box = tb.Labelframe(w, text="Enviar clave de rastreo (opcional)", padding=12, bootstyle="info")
+        submit_box.pack(fill="x", padx=12, pady=(0, 12))
+
+        tb.Label(submit_box, text="Clave de rastreo / folio:").pack(anchor="w")
+        entry_track = tb.Entry(submit_box, font=("Segoe UI", 11))
+        entry_track.pack(fill="x", pady=(4, 8))
+
+        def do_submit():
+            tracking_key = entry_track.get().strip()
+            if not tracking_key:
+                messagebox.showerror("Error", "Escribe tu clave de rastreo.")
+                return
+            try:
+                resp = self._req(
+                    "POST",
+                    "/transfer/submit",
+                    headers=self.auth_headers(),
+                    json_body={"reference": reference, "tracking_key": tracking_key},
+                    timeout=25,
+                )
+                if self._handle_unauthorized(resp):
+                    return
+                data = self._safe_json(resp) or {}
+                if resp.status_code == 200:
+                    messagebox.showinfo("Enviado", "Comprobante enviado. En espera de aprobación.")
+                    w.destroy()
+                    return
+                err = data.get("error", f"HTTP {resp.status_code}")
+                messagebox.showerror("Error", f"No se pudo enviar el comprobante: {err}")
+            except requests.RequestException as e:
+                messagebox.showerror("Error", f"Error de conexión: {e}")
+
+        tb.Button(submit_box, text="Enviar", bootstyle="info", command=do_submit).pack(anchor="e")
+        tb.Button(w, text="Cerrar", bootstyle="secondary", command=w.destroy).pack(pady=(0, 12))
+
+    # ----------------------------
+    # VINs API
+    # ----------------------------
+    def guardar_vin_en_flask(self, vin_completo: str, show_ui: bool = True) -> bool:
         if not self.auth_token:
             if show_ui:
                 messagebox.showerror("Error", "Sesión inválida. Vuelve a iniciar sesión.")
             return False
 
-        url = f"{API_BASE}/guardar_vin"
-        payload = {"vin_completo": vin_data.get("vin_completo")}
         try:
-            resp = requests.post(url, headers=self.auth_headers(), json=payload, timeout=20)
-            if resp.status_code == 200:
-                if show_ui:
-                    messagebox.showinfo("Éxito", "VIN guardado en PostgreSQL.")
-                return True
-            else:
-                err = self._safe_json(resp).get("error", "Error desconocido")
-                if show_ui:
-                    messagebox.showerror("Error", f"No se pudo guardar el VIN: {err}")
+            resp = self._req("POST", "/guardar_vin", headers=self.auth_headers(), json_body={"vin_completo": vin_completo}, timeout=20)
+            if self._handle_unauthorized(resp):
                 return False
+            if resp.status_code == 200:
+                return True
+            err = self._safe_json(resp).get("error", f"HTTP {resp.status_code}")
+            if show_ui:
+                messagebox.showerror("Error", f"No se pudo guardar el VIN: {err}")
+            return False
         except requests.RequestException as e:
             if show_ui:
                 messagebox.showerror("Error", f"Error al conectarse al servidor: {e}")
@@ -616,13 +980,14 @@ class VinderApp:
         if not self.auth_token:
             messagebox.showerror("Error", "Sesión inválida. Vuelve a iniciar sesión.")
             return []
-        url = f"{API_BASE}/ver_vins"
         try:
-            resp = requests.get(url, headers=self.auth_headers(), timeout=20)
+            resp = self._req("GET", "/ver_vins", headers=self.auth_headers(), timeout=20)
+            if self._handle_unauthorized(resp):
+                return []
             if resp.status_code == 200:
                 data = self._safe_json(resp)
                 return data.get("vins", [])
-            err = self._safe_json(resp).get("error", "Error desconocido")
+            err = self._safe_json(resp).get("error", f"HTTP {resp.status_code}")
             messagebox.showerror("Error", f"No se pudo obtener VINs: {err}")
             return []
         except requests.RequestException as e:
@@ -635,14 +1000,14 @@ class VinderApp:
                 messagebox.showerror("Error", "Sesión inválida. Vuelve a iniciar sesión.")
             return 0
 
-        url = f"{API_BASE}/obtener_secuencial"
-        payload = {"year": year_code}
         try:
-            resp = requests.post(url, headers=self.auth_headers(), json=payload, timeout=20)
+            resp = self._req("POST", "/obtener_secuencial", headers=self.auth_headers(), json_body={"year": year_code}, timeout=20)
+            if self._handle_unauthorized(resp):
+                return 0
             if resp.status_code == 200:
                 data = self._safe_json(resp)
                 return int(data.get("secuencial", 0) or 0)
-            err = self._safe_json(resp).get("error", "Error desconocido")
+            err = self._safe_json(resp).get("error", f"HTTP {resp.status_code}")
             if show_ui:
                 messagebox.showerror("Error", f"Error al obtener secuencial: {err}")
             return 0
@@ -655,9 +1020,10 @@ class VinderApp:
         if not self.auth_token:
             messagebox.showerror("Error", "Sesión inválida. Vuelve a iniciar sesión.")
             return
-        url = f"{API_BASE}/export_vins"
         try:
-            resp = requests.get(url, headers=self.auth_headers(), timeout=60)
+            resp = self._req("GET", "/export_vins", headers=self.auth_headers(), timeout=60)
+            if self._handle_unauthorized(resp):
+                return
             if resp.status_code == 200:
                 filename = filedialog.asksaveasfilename(
                     defaultextension=".xlsx",
@@ -671,7 +1037,7 @@ class VinderApp:
                 else:
                     messagebox.showinfo("Exportar VINs", "Exportación cancelada.")
             else:
-                err = self._safe_json(resp).get("error", "Error desconocido")
+                err = self._safe_json(resp).get("error", f"HTTP {resp.status_code}")
                 messagebox.showerror("Error", f"No se pudo exportar los VINs: {err}")
         except requests.RequestException as e:
             messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
@@ -685,12 +1051,13 @@ class VinderApp:
         if not messagebox.askyesno("Confirmación", "¿Estás seguro que deseas eliminar TODOS los VINs?"):
             return
         try:
-            url = f"{API_BASE}/eliminar_todos_vins"
-            resp = requests.post(url, headers=self.auth_headers(), json={}, timeout=20)
+            resp = self._req("POST", "/eliminar_todos_vins", headers=self.auth_headers(), json_body={}, timeout=20)
+            if self._handle_unauthorized(resp):
+                return
             if resp.status_code == 200:
                 messagebox.showinfo("Éxito", "Todos los VINs han sido eliminados y el secuencial se ha reiniciado.")
             else:
-                err = self._safe_json(resp).get("error", "Error desconocido")
+                err = self._safe_json(resp).get("error", f"HTTP {resp.status_code}")
                 messagebox.showerror("Error", f"No se pudo eliminar todos los VINs: {err}")
         except requests.RequestException as e:
             messagebox.showerror("Error", f"No se pudo conectar al servidor: {e}")
@@ -704,12 +1071,13 @@ class VinderApp:
         if not messagebox.askyesno("Confirmación", "¿Estás seguro que deseas eliminar el ÚLTIMO VIN?"):
             return
         try:
-            url = f"{API_BASE}/eliminar_ultimo_vin"
-            resp = requests.post(url, headers=self.auth_headers(), json={}, timeout=20)
+            resp = self._req("POST", "/eliminar_ultimo_vin", headers=self.auth_headers(), json_body={}, timeout=20)
+            if self._handle_unauthorized(resp):
+                return
             if resp.status_code == 200:
                 messagebox.showinfo("Éxito", "El último VIN ha sido eliminado y el secuencial se ha actualizado.")
             else:
-                err = self._safe_json(resp).get("error", "Error desconocido")
+                err = self._safe_json(resp).get("error", f"HTTP {resp.status_code}")
                 messagebox.showerror("Error", f"No se pudo eliminar el último VIN: {err}")
         except requests.RequestException as e:
             messagebox.showerror("Error", f"No se pudo conectar con el servidor: {e}")
@@ -760,12 +1128,14 @@ class VinderApp:
         card_right.grid(row=0, column=1, padx=10, pady=10, sticky="n")
 
         tb.Label(card_right, text=f"Versión: {APP_VERSION}").pack(anchor="w")
+        tb.Label(card_right, text=f"API: {API_BASE}").pack(anchor="w")
         tb.Label(card_right, text=f"Clientes: {len(self.clients)}").pack(anchor="w")
+        tb.Label(card_right, text=f"Pendientes (local): {self.pending_vins_count()}").pack(anchor="w")
+
         tb.Button(card_right, text="Buscar actualizaciones", bootstyle="secondary", command=self.check_for_updates).pack(
             fill="x", pady=(12, 0)
         )
 
-        # Status bar
         statusbar = tb.Frame(root, padding=(0, 8))
         statusbar.grid(row=1, column=0, sticky="ew")
         statusbar.columnconfigure(0, weight=1)
@@ -799,14 +1169,17 @@ class VinderApp:
             if not username or not password:
                 messagebox.showerror("Error", "Completa todos los campos.")
                 return
-            register_url = f"{API_BASE}/register"
+
             try:
-                resp = requests.post(register_url, json={"username": username, "password": password}, timeout=20)
+                resp = self._req("POST", "/register", json_body={"username": username, "password": password}, timeout=20)
+                if resp.status_code == 404:
+                    messagebox.showerror("Error", "El backend de producción no tiene /register. Crea usuarios con /admin/create_user.")
+                    return
                 if resp.status_code == 201:
                     messagebox.showinfo("Éxito", "Cuenta creada exitosamente. Ahora puedes iniciar sesión.")
                     self.mostrar_ventana_inicio()
                 else:
-                    err = self._safe_json(resp).get("error", "Error desconocido")
+                    err = self._safe_json(resp).get("error", f"HTTP {resp.status_code}")
                     messagebox.showerror("Error", f"Registro fallido: {err}")
             except requests.RequestException as e:
                 messagebox.showerror("Error", f"Error al conectarse con el servidor: {e}")
@@ -845,17 +1218,25 @@ class VinderApp:
                 messagebox.showerror("Error", "Completa todos los campos.")
                 return
 
-            login_url = f"{API_BASE}/login"
             try:
-                resp = requests.post(login_url, json={"username": user, "password": pw}, timeout=20)
+                resp = self._req("POST", "/login", json_body={"username": user, "password": pw}, timeout=20)
                 if resp.status_code != 200:
-                    err = self._safe_json(resp).get("error", "Error desconocido")
+                    err = self._safe_json(resp).get("error", f"HTTP {resp.status_code}")
                     messagebox.showerror("Error", f"Login fallido: {err}")
                     return
 
-                data = self._safe_json(resp)
+                data = self._safe_json(resp) or {}
                 token = data.get("token")
                 client_id = data.get("client_id")
+
+                # Fallback /me por si cambias login algún día
+                if token and not client_id:
+                    try:
+                        me_resp = self._req("GET", "/me", headers={"Authorization": f"Bearer {token}"}, timeout=15)
+                        if me_resp.status_code == 200:
+                            client_id = (me_resp.json() or {}).get("client_id")
+                    except Exception:
+                        pass
 
                 if not token or not client_id:
                     messagebox.showerror("Error", "Login OK pero faltó token o client_id en la respuesta.")
@@ -872,13 +1253,15 @@ class VinderApp:
                         "Error",
                         f"Tu usuario está asociado a '{client_id}', pero no existe su archivo en clients.\n\nDetalle: {e}",
                     )
-                    self.usuario_actual = None
-                    self.auth_token = None
-                    self.client_id = None
+                    self.cerrar_sesion()
                     return
 
                 self._toast(f"Bienvenido, {user}", bootstyle="success")
                 self.ventana_principal()
+
+                # Auto-sync silencioso al iniciar sesión (si hay pendientes)
+                if self.pending_vins_count() > 0:
+                    self.master.after(300, lambda: self.sync_pending_vins_async(show_ui=False))
 
             except requests.RequestException as e:
                 messagebox.showerror("Error", f"Error al conectar con el servidor: {e}")
@@ -889,7 +1272,7 @@ class VinderApp:
         )
 
     # ----------------------------
-    # PANTALLA PRINCIPAL (UI PRO)
+    # PANTALLA PRINCIPAL
     # ----------------------------
     def ventana_principal(self):
         self.limpiar_main_frame()
@@ -918,12 +1301,10 @@ class VinderApp:
         content.columnconfigure(1, weight=2)
         content.rowconfigure(0, weight=1)
 
-        # Card: datos VIN
         card_left = tb.Labelframe(content, text="Datos del VIN", padding=PAD, bootstyle="primary")
         card_left.grid(row=0, column=0, sticky="nsew", padx=(0, PAD))
         card_left.columnconfigure(1, weight=1)
 
-        # Card: resultado + acciones
         card_right = tb.Frame(content)
         card_right.grid(row=0, column=1, sticky="nsew")
         card_right.rowconfigure(1, weight=1)
@@ -935,7 +1316,6 @@ class VinderApp:
         card_actions = tb.Labelframe(card_right, text="Acciones", padding=PAD, bootstyle="secondary")
         card_actions.grid(row=1, column=0, sticky="nsew")
 
-        # ---- Inputs
         tb.Label(card_left, text="WMI (3 caracteres):").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=(0, 8))
         entry_wmi = tb.Entry(card_left, textvariable=self.var_wmi, width=10, font=("Segoe UI", 12))
         entry_wmi.grid(row=0, column=1, sticky="w", pady=(0, 8))
@@ -943,7 +1323,6 @@ class VinderApp:
 
         self.crear_optionmenus(card_left, start_row=1)
 
-        # ---- Resultado (Entry readonly)
         self.vin_var.set("")
         vin_entry = tb.Entry(card_result, textvariable=self.vin_var, font=("Segoe UI", 14, "bold"))
         vin_entry.grid(row=0, column=0, sticky="ew", pady=(0, 10))
@@ -963,11 +1342,23 @@ class VinderApp:
             command=self._ver_detalle_pos9,
         ).grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
-        # ---- Acciones
         self.btn_generate = tb.Button(card_actions, text="Generar VIN", bootstyle="primary", command=self.generar_vin_async)
         self.btn_generate.pack(fill="x", pady=(0, 10))
 
-        tb.Button(card_actions, text="Renovar Licencia", bootstyle="success", command=self.iniciar_pago).pack(fill="x", pady=4)
+        # ✅ NUEVO: Sync pendientes (si falla el guardado, aquí lo arreglas)
+        self.btn_sync = tb.Button(
+            card_actions,
+            text=f"Sincronizar VINs pendientes ({self.pending_vins_count()})",
+            bootstyle="info",
+            command=lambda: self.sync_pending_vins_async(show_ui=True),
+        )
+        self.btn_sync.pack(fill="x", pady=4)
+
+        if PAYMENT_MODE in ("stripe", "both"):
+            tb.Button(card_actions, text="Renovar Licencia (Tarjeta)", bootstyle="success", command=self.iniciar_pago_stripe).pack(fill="x", pady=4)
+        if PAYMENT_MODE in ("transfer", "both"):
+            tb.Button(card_actions, text="Pagar por Transferencia", bootstyle="success", command=self.iniciar_transferencia).pack(fill="x", pady=4)
+
         tb.Button(card_actions, text="Ver VINs Generados", bootstyle="info", command=self.ventana_lista_vins).pack(fill="x", pady=4)
         tb.Button(card_actions, text="Exportar VINs a Excel", bootstyle="info", command=self.exportar_vins).pack(fill="x", pady=4)
 
@@ -981,12 +1372,13 @@ class VinderApp:
         tb.Button(card_actions, text="Buscar actualizaciones", bootstyle="secondary", command=self.check_for_updates).pack(fill="x", pady=4)
         tb.Button(card_actions, text="Cerrar Sesión", bootstyle="danger", command=self.cerrar_sesion).pack(fill="x", pady=(10, 0))
 
-        # ===== STATUSBAR =====
         statusbar = tb.Frame(self.main_frame, padding=(PAD, 8))
         statusbar.grid(row=2, column=0, sticky="ew")
         statusbar.columnconfigure(0, weight=1)
         tb.Label(statusbar, textvariable=self.status_var, bootstyle="secondary").grid(row=0, column=0, sticky="w")
         tb.Label(statusbar, text=f"Versión {APP_VERSION}", bootstyle="secondary").grid(row=0, column=1, sticky="e")
+
+        self._refresh_sync_button()
 
     def _ver_detalle_pos9(self):
         if not self.last_conversion_details:
@@ -1005,7 +1397,6 @@ class VinderApp:
         tb.Button(w, text="Cerrar", bootstyle="secondary", command=w.destroy).pack(pady=(0, 10))
 
     def crear_optionmenus(self, parent, start_row=0):
-        # Catálogos del cliente activo
         p4 = self.catalogs["posicion_4"]
         p5 = self.catalogs["posicion_5"]
         p6 = self.catalogs["posicion_6"]
@@ -1042,7 +1433,7 @@ class VinderApp:
         add_combo(row, "Pos.11 (Planta):", self.var_c11, p11.keys()); row += 1
 
     # ----------------------------
-    # Generación VIN (sin congelar UI)
+    # Generación VIN (sin congelar UI) + cola local si falla guardado
     # ----------------------------
     def generar_vin_async(self):
         if self.btn_generate is not None:
@@ -1055,10 +1446,9 @@ class VinderApp:
 
         def worker():
             try:
-                # 1) licencia (sin messagebox en thread)
                 ok_lic = self.verificar_licencia(show_ui=False)
                 if not ok_lic:
-                    self.master.after(0, lambda: messagebox.showerror("Suscripción requerida", "Suscripción requerida."))
+                    self.master.after(0, lambda: messagebox.showerror("Suscripción requerida", "Licencia requerida o expirada."))
                     self.master.after(0, lambda: self.status_var.set("Suscripción requerida."))
                     return
 
@@ -1097,15 +1487,37 @@ class VinderApp:
                 pos9 = self.calcular_posicion_9(valores_sin_pos9)
                 vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{pos9}{c10}{c11}{fixed_12_14}{sec_str}"
 
-                saved = self.guardar_vin_en_flask({"vin_completo": vin_completo}, show_ui=False)
+                # siempre muestra el VIN generado en UI
+                self.master.after(0, lambda: self.vin_var.set(vin_completo))
+
+                saved = self.guardar_vin_en_flask(vin_completo, show_ui=False)
+
                 if not saved:
-                    self.master.after(0, lambda: messagebox.showerror("Error", "No se pudo guardar el VIN en el servidor."))
-                    self.master.after(0, lambda: self.status_var.set("VIN generado, pero no guardado."))
-                    self.master.after(0, lambda: self.vin_var.set(vin_completo))
+                    # ✅ NUEVO: no se pierde
+                    self._queue_pending_vin(vin_completo)
+
+                    # copia al portapapeles (UI thread)
+                    self.master.after(0, lambda: self._copy_to_clipboard(vin_completo))
+
+                    def warn():
+                        self._refresh_sync_button()
+                        messagebox.showwarning(
+                            "VIN pendiente",
+                            "Se generó el VIN, pero no se pudo guardar en el servidor.\n\n"
+                            "✅ Ya se copió al portapapeles\n"
+                            "✅ Se guardó como PENDIENTE para sincronizar después\n\n"
+                            "Tip: usa el botón 'Sincronizar VINs pendientes'."
+                        )
+                        self.status_var.set(f"VIN generado (pendiente). Pendientes: {self.pending_vins_count()}")
+
+                    self.master.after(0, warn)
                     return
 
-                self.master.after(0, lambda: self.vin_var.set(vin_completo))
-                self.master.after(0, lambda: self.status_var.set("VIN generado y guardado."))
+                # si guardó ok
+                def ok_ui():
+                    self._refresh_sync_button()
+                    self.status_var.set("VIN generado y guardado.")
+                self.master.after(0, ok_ui)
 
             finally:
                 if self.btn_generate is not None:
@@ -1113,14 +1525,7 @@ class VinderApp:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # (mantengo tu método original por compatibilidad, pero ya no lo uso desde la UI)
-    def generar_vin(self):
-        self.generar_vin_async()
-
-    # ----------------------------
-    # Cálculo Posición 9
-    # ----------------------------
-    def calcular_posicion_9(self, valores):
+    def calcular_posicion_9(self, valores: str) -> str:
         sustituciones = {
             "A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7, "H": 8,
             "J": 1, "K": 2, "L": 3, "M": 4, "N": 5, "P": 7, "R": 9, "S": 2,
@@ -1159,7 +1564,6 @@ class VinderApp:
         conversion_details += f"Dígito verificador: {digito_verificador}\n"
 
         self.last_conversion_details = conversion_details
-        # feedback pequeño en status
         self.master.after(0, lambda: self.status_var.set(f"Dígito verificador (Pos.9): {digito_verificador}"))
 
         return digito_verificador
@@ -1180,6 +1584,7 @@ class VinderApp:
         header = tb.Frame(vins_window, padding=12)
         header.pack(fill="x")
         tb.Label(header, text="VINs Generados", font=("Segoe UI", 14, "bold")).pack(side="left")
+        tb.Label(header, text=f"Pendientes local: {self.pending_vins_count()}", bootstyle="secondary").pack(side="right")
 
         st = ScrolledText(vins_window, wrap="none", font=("Consolas", 11), height=20)
         st.pack(fill="both", expand=True, padx=12, pady=8)
@@ -1196,6 +1601,7 @@ class VinderApp:
         btn_frame = tb.Frame(vins_window, padding=12)
         btn_frame.pack(fill="x")
 
+        tb.Button(btn_frame, text="Sincronizar pendientes", bootstyle="info", command=lambda: self.sync_pending_vins_async(show_ui=True)).pack(side="left", padx=5)
         tb.Button(btn_frame, text="Exportar Excel", bootstyle="info", command=self.exportar_vins).pack(side="left", padx=5)
         tb.Button(btn_frame, text="Eliminar TODOS", bootstyle="danger", command=self.eliminar_todos_vins).pack(side="left", padx=5)
         tb.Button(btn_frame, text="Eliminar ÚLTIMO", bootstyle="danger", command=self.eliminar_ultimo_vin).pack(side="left", padx=5)
@@ -1211,6 +1617,7 @@ class VinderApp:
         self.vin_var.set("")
         self.last_conversion_details = ""
         self.status_var.set("Listo")
+        self.btn_sync = None
         self.mostrar_ventana_inicio()
 
 
@@ -1218,7 +1625,6 @@ class VinderApp:
 # EJECUCIÓN DEL PROGRAMA
 # ----------------------------
 if __name__ == "__main__":
-    # cargar tema guardado si existe
     s = load_settings()
     theme = s.get("theme", "sandstone")
 
