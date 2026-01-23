@@ -183,6 +183,10 @@ class VIN(db.Model):
     vin_completo = db.Column(db.String(17), nullable=False)
     created_at = db.Column(db.DateTime, default=db.func.now())
 
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "vin_completo", name="uq_vin_user_vin"),
+    )
+
 class Subscription(db.Model):
     __tablename__ = "subscriptions"
 
@@ -614,11 +618,12 @@ def guardar_vin_endpoint():
         nuevo_vin = VIN(user_id=user.id, vin_completo=vin_completo)
         db.session.add(nuevo_vin)
         db.session.commit()
-        return jsonify({"message": "VIN guardado"}), 200
-    except Exception as e:
+        return jsonify({"message": "VIN guardado", "already_existed": False}), 200
+
+    except IntegrityError:
         db.session.rollback()
-        logger.error(f"Error al guardar VIN: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"message": "VIN ya existía", "already_existed": True}), 200
+
 
 @app.route("/ver_vins", methods=["GET"])
 @require_auth
@@ -961,6 +966,7 @@ def transfer_submit():
 
     order.tracking_key = tracking_key
     order.status = "submitted"
+    order.submitted_at = utcnow()
     db.session.commit()
 
     return jsonify({"message": "Comprobante enviado. En espera de aprobación.", "order": order.to_public_dict()}), 200
@@ -1005,6 +1011,9 @@ def admin_transfer_approve():
 
     try:
         order.status = "approved"
+        order.confirmed_at = utcnow()
+        order.validated_by = "admin"  # o el nombre/ID si lo tienes
+        order.validation_note = "Aprobado manualmente"
         db.session.commit()
 
         extend_license(user, days=365)
