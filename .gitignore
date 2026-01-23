@@ -21,10 +21,10 @@ root.json
 # --- python ---
 __pycache__/
 *.pyc
-
+*.spec
 # --- logs ---
 *.log
-
+# --- IDE / packaging ---
 # --- OS ---
 .DS_Store
 Thumbs.db
