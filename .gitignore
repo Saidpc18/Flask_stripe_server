@@ -60,3 +60,8 @@ PACKAGE_*/
 Vinder-updates/
 root.json
 
+
+Vinder-*.tar.gz
+Vinder_spec.txt
+/dist/
+/build/
