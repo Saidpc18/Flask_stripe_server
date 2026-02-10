@@ -4,6 +4,14 @@
 # - Si falla /guardar_vin: NO se pierde el VIN (se copia al portapapeles + se guarda en pendientes)
 # - Botón "Sincronizar VINs pendientes (N)" para reintentar subirlos al servidor
 # - Auto-sync silencioso al iniciar sesión (si hay pendientes)
+#
+# ✅ FIX DEFINITIVO CLIENTS:
+# - Detecta clients dentro del bundle (_internal/clients en PyInstaller onedir)
+# - Soporta modo portable (clients junto al .exe)
+# - Soporta onefile (_MEIPASS)
+# - Si AppData está vacío, copia automáticamente desde el bundle
+
+from __future__ import annotations
 
 import os
 import sys
@@ -11,6 +19,8 @@ import logging
 import json
 import threading
 import webbrowser
+import shutil
+import subprocess
 from typing import Optional
 
 import requests
@@ -18,42 +28,106 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 import ttkbootstrap as tb
-from ttkbootstrap.constants import *
-from tkinter import messagebox, filedialog
-from tkinter.scrolledtext import ScrolledText
-from PIL import Image, ImageTk
-
-# ====== TUFUP (CLIENT-SIDE) ======
-try:
-    from tufup.client import Client as TufupClient
-except Exception:
-    TufupClient = None  # si no está instalado, mostraremos error claro
-
-# Toast (opcional)
 try:
     from ttkbootstrap.toast import ToastNotification
 except Exception:
     ToastNotification = None
 
+from ttkbootstrap.constants import *
+from tkinter import messagebox, filedialog
+from tkinter.scrolledtext import ScrolledText
+from PIL import Image, ImageTk
 
 # ============================
-# CONFIGURACIÓN DE LOGGING
+# CONFIG (APP)
 # ============================
+APP_NAME = "Vinder"
+APP_VERSION = "0.0.18"
+
+# ============================
+# UTILIDADES DE RUTAS / RECURSOS
+# ============================
+def _local_appdata_base() -> str:
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        return base
+    return os.path.join(os.path.expanduser("~"), "AppData", "Local")
+
+
+def app_data_dir() -> str:
+    """
+    Carpeta estable en AppData Local para guardar settings/cola (NO se borra con updates).
+    """
+    d = os.path.join(_local_appdata_base(), APP_NAME)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def resource_path(*parts: str) -> str:
+    """
+    Devuelve una ruta absoluta a un recurso.
+    - En dev: junto a este archivo.
+    - En PyInstaller: dentro de _MEIPASS (onedir: _internal).
+    """
+    base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_dir, *parts)
+
+
+def app_install_dir() -> str:
+    """
+    Directorio donde está instalada la app.
+    - En modo frozen: carpeta del .exe
+    - En dev: carpeta del Vinder.py
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def tuf_cache_dir() -> str:
+    """
+    Carpeta de cache del updater en AppData Local.
+    """
+    return os.path.join(app_data_dir(), "tufup")
+
+
+# ============================
+# CONFIGURACIÓN DE LOGGING (a AppData)
+# ============================
+LOG_PATH = os.path.join(app_data_dir(), "app.log")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("app.log"), logging.StreamHandler()],
+    handlers=[logging.FileHandler(LOG_PATH, encoding="utf-8"), logging.StreamHandler()],
+    force=True,  # <- CLAVE: asegura que sí se apliquen handlers
 )
 logger = logging.getLogger(__name__)
+logger.info(f"[LOG] Writing to {LOG_PATH}")
+
+# ====== TUFUP (CLIENT-SIDE) ======
+TUFUP_IMPORT_ERROR = None
+try:
+    from tufup.client import Client as TufupClient
+except Exception as e:
+    TufupClient = None
+    TUFUP_IMPORT_ERROR = f"{type(e).__name__}: {e}"
+    logging.getLogger(__name__).exception("[UPDATER] Falló import tufup.client dentro del runtime")
 
 # ============================
 # CONFIG UPDATER (GITHUB PAGES)
 # ============================
-APP_NAME = "Vinder"
-APP_VERSION = "0.0.0"  # <-- CAMBIA ESTO al generar releases (ej: "0.0.7")
+PAGES_BASE = "https://saidpc18.github.io/Vinder-updates/"
+RAW_BASE   = "https://raw.githubusercontent.com/Saidpc18/Vinder-updates/main/"
 
-METADATA_BASE_URL = "https://saidpc18.github.io/Vinder-updates/metadata/"
-TARGET_BASE_URL = "https://saidpc18.github.io/Vinder-updates/targets/"
+UPDATE_SOURCES = [
+    {"name": "pages", "metadata": PAGES_BASE + "metadata/", "target": PAGES_BASE + "targets/"},
+    {"name": "raw",   "metadata": RAW_BASE   + "metadata/", "target": RAW_BASE   + "targets/"},
+]
+
+# Mantén estas por compatibilidad (por si algo más las usa)
+METADATA_BASE_URL = UPDATE_SOURCES[0]["metadata"]
+TARGET_BASE_URL   = UPDATE_SOURCES[0]["target"]
 
 # ============================
 # BACKEND API (RAILWAY)
@@ -83,47 +157,67 @@ HTTP_VERIFY_SSL = os.getenv("VINDER_HTTP_VERIFY_SSL", "1").strip().lower() in ("
 
 
 # ============================
-# UTILIDADES DE RUTAS / RECURSOS
+# UPDATER FALLBACK (Windows locks) — FIX
 # ============================
-def resource_path(relative_name: str) -> str:
-    """
-    Devuelve una ruta absoluta a un recurso.
-    - En dev: junto a este archivo.
-    - En PyInstaller: dentro de _MEIPASS o junto al ejecutable según el caso.
-    """
-    meipass = getattr(sys, "_MEIPASS", None)
-    base_dir = meipass if meipass else os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base_dir, relative_name)
+def _is_windows() -> bool:
+    return os.name == "nt"
 
 
-def app_install_dir() -> str:
+def schedule_windows_apply_after_exit(extract_dir: str, install_dir: str, exe_path: str, pid: int) -> None:
     """
-    Directorio donde está instalada la app.
-    - En modo frozen: carpeta del .exe
-    - En dev: carpeta del Vinder.py
+    Crea y lanza un .cmd que:
+      - espera a que termine el proceso pid
+      - copia (robocopy) extract_dir -> install_dir
+      - relanza exe_path
     """
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(os.path.abspath(sys.executable))
-    return os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(install_dir, exist_ok=True)
 
+    # ✅ FIX: el .cmd SIEMPRE en AppData estable (no mezclar rutas)
+    cmd_path = os.path.join(_local_appdata_base(), APP_NAME, "vinder_apply_update.cmd")
+    os.makedirs(os.path.dirname(cmd_path), exist_ok=True)
 
-def app_data_dir() -> str:
-    """
-    Carpeta estable en AppData Local para guardar settings/cola (NO se borra con updates).
-    """
-    base = os.environ.get("LOCALAPPDATA")
-    if not base:
-        base = os.path.join(os.path.expanduser("~"), "AppData", "Local")
-    d = os.path.join(base, APP_NAME)
-    os.makedirs(d, exist_ok=True)
-    return d
+    cmd = f"""@echo off
+setlocal ENABLEDELAYEDEXPANSION
 
+set PID={pid}
+set SRC={extract_dir}
+set DST={install_dir}
+set EXE={exe_path}
 
-def tuf_cache_dir() -> str:
-    """
-    Carpeta de cache del updater en AppData Local.
-    """
-    return os.path.join(app_data_dir(), "tufup")
+REM Espera a que el proceso termine
+:wait
+tasklist /FI "PID eq %PID%" 2>NUL | find /I "%PID%" >NUL
+if "%ERRORLEVEL%"=="0" (
+  timeout /t 1 /nobreak >NUL
+  goto wait
+)
+
+REM Dale un respiro a Windows para soltar locks
+timeout /t 1 /nobreak >NUL
+
+REM Copia archivos nuevos. /E incluye subcarpetas. /R reintentos. /W espera.
+REM /IS y /IT ayudan con timestamps/atributos.
+robocopy "%SRC%" "%DST%" *.* /E /IS /IT /R:120 /W:1
+
+REM Relanza la app
+start "" "%EXE%"
+
+REM Autodestruye el script
+del "%~f0"
+"""
+
+    with open(cmd_path, "w", encoding="utf-8") as f:
+        f.write(cmd)
+
+    creationflags = 0
+    if _is_windows():
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+
+    subprocess.Popen(
+        ["cmd.exe", "/c", cmd_path] if _is_windows() else [cmd_path],
+        creationflags=creationflags,
+        close_fds=True,
+    )
 
 
 # ============================
@@ -141,11 +235,83 @@ def _atomic_write_json(path: str, data) -> None:
 
 
 # ============================
-# CLIENTES (CONFIG EXTERNO)
+# CLIENTES (CONFIG EXTERNO) — FIX DEFINITIVO
 # ============================
+def bundled_clients_dir() -> str:
+    """
+    Devuelve la carpeta de clients dentro del bundle/instalación.
+    PyInstaller onedir (6+): dist/Vinder/_internal/clients
+    Portable: dist/Vinder/clients
+    Onefile: en _MEIPASS via resource_path("clients")
+    """
+    candidates = [
+        resource_path("clients"),  # onedir: apunta a dist/Vinder/_internal/clients
+        os.path.join(app_install_dir(), "_internal", "clients"),
+        os.path.join(app_install_dir(), "clients"),
+    ]
+    for p in candidates:
+        if p and os.path.isdir(p):
+            return p
+    return ""
+
+
+
+def ensure_clients_bootstrapped() -> str:
+    """
+    Asegura que existan clients en AppData.
+    Si AppData está vacío, copia desde el bundle (_internal/clients) o portable/MEIPASS.
+    """
+    dst = os.path.join(app_data_dir(), "clients")
+    os.makedirs(dst, exist_ok=True)
+
+    # Si ya hay JSONs en AppData, úsalo
+    try:
+        if any(fn.lower().endswith(".json") for fn in os.listdir(dst)):
+            logger.info(f"[CLIENTS] Using AppData clients at {dst}")
+            return dst
+    except Exception:
+        pass
+
+    src = bundled_clients_dir()
+    logger.info(f"[CLIENTS] Bootstrapping from {src} -> {dst}")
+
+    copied = 0
+    if src and os.path.isdir(src):
+        for fn in os.listdir(src):
+            if fn.lower().endswith(".json"):
+                try:
+                    shutil.copy2(os.path.join(src, fn), os.path.join(dst, fn))
+                    copied += 1
+                except Exception as e:
+                    logger.warning(f"[CLIENTS] Could not copy {fn}: {e}")
+
+    logger.info(f"[CLIENTS] Bootstrapped to {dst} (copied={copied})")
+    return dst
+
+
 def clients_dir() -> str:
-    # Carpeta externa junto al Vinder.py o junto al exe (en producción)
-    return os.path.join(app_install_dir(), "clients")
+    """
+    Orden de preferencia:
+    1) VINDER_CLIENTS_DIR (override)
+    2) Portable/dev: clients junto al ejecutable/py
+    3) AppData (estable) con bootstrap desde bundle si falta
+    """
+    env = os.getenv("VINDER_CLIENTS_DIR", "").strip()
+    if env:
+        return env
+
+    base = app_install_dir()
+
+    portable = os.path.join(base, "clients")
+    if os.path.isdir(portable):
+        try:
+            if any(f.lower().endswith(".json") for f in os.listdir(portable)):
+                return portable
+        except Exception:
+            pass
+
+    # distribución estable
+    return ensure_clients_bootstrapped()
 
 
 def list_clients() -> list[dict]:
@@ -199,7 +365,7 @@ def save_settings(d: dict) -> None:
 # ============================
 def ensure_root_json_in_cache() -> str:
     """
-    Copia root.json desde el directorio de la app al cache (si no existe).
+    Copia root.json desde el bundle/app al cache (si no existe).
     Devuelve la ruta al root.json en cache.
     """
     cache = tuf_cache_dir()
@@ -211,37 +377,37 @@ def ensure_root_json_in_cache() -> str:
         return dst_root
 
     src_root_candidates = [
-        resource_path("root.json"),                  # dentro de PyInstaller (_MEIPASS) si lo empaquetas
-        os.path.join(app_install_dir(), "root.json") # junto al .exe (recomendado para producción)
+        # 1) PyInstaller / dev: MEIPASS (onedir: _internal) o junto al .py
+        resource_path("root.json"),
+
+        # 2) junto al exe (si compilas con layout viejo o lo colocas manualmente)
+        os.path.join(app_install_dir(), "root.json"),
+
+        # 3) layout moderno onedir: explícito en _internal (fallback extra)
+        os.path.join(app_install_dir(), "_internal", "root.json"),
     ]
 
-    src_root = None
-    for cand in src_root_candidates:
-        if os.path.exists(cand):
-            src_root = cand
-            break
+    src_root = next((p for p in src_root_candidates if p and os.path.exists(p)), None)
 
     if not src_root:
         raise FileNotFoundError(
             "No se encontró root.json.\n\n"
-            "PRODUCCIÓN: coloca root.json junto al .exe:\n"
-            f"  {os.path.join(app_install_dir(), 'root.json')}\n\n"
-            "DEV: coloca root.json junto a Vinder.py:\n"
-            f"  {resource_path('root.json')}"
+            "Busqué en:\n"
+            + "\n".join(f"  - {p}" for p in src_root_candidates)
+            + "\n\n"
+            "Solución:\n"
+            "  - PyInstaller onedir (6+): asegúrate de incluir root.json como data (cae en _internal)\n"
+            "  - o colócalo junto al exe si usas layout viejo.\n"
         )
 
-    with open(src_root, "rb") as fsrc, open(dst_root, "wb") as fdst:
-        fdst.write(fsrc.read())
-
+    shutil.copy2(src_root, dst_root)
     return dst_root
 
 
-def make_tufup_client() -> "TufupClient":
-    """
-    Crea el cliente de tufup (lado usuario).
-    """
+def make_tufup_client(metadata_base_url: str = METADATA_BASE_URL,
+                     target_base_url: str = TARGET_BASE_URL) -> "TufupClient":
     if TufupClient is None:
-        raise RuntimeError("tufup no está instalado. Instala con: pip install tufup")
+        raise RuntimeError(f"tufup no está instalado. Detalle: {TUFUP_IMPORT_ERROR or 'unknown'}")
 
     cache = tuf_cache_dir()
     metadata_dir = os.path.join(cache, "metadata")
@@ -253,14 +419,17 @@ def make_tufup_client() -> "TufupClient":
 
     ensure_root_json_in_cache()
 
+    logger.info(f"[UPDATER] metadata_base_url={metadata_base_url}")
+    logger.info(f"[UPDATER] target_base_url={target_base_url}")
+
     return TufupClient(
         app_name=APP_NAME,
         app_install_dir=app_install_dir(),
         current_version=APP_VERSION,
         metadata_dir=metadata_dir,
-        metadata_base_url=METADATA_BASE_URL,
+        metadata_base_url=metadata_base_url,
         target_dir=target_dir,
-        target_base_url=TARGET_BASE_URL,
+        target_base_url=target_base_url,
         extract_dir=extract_dir,
     )
 
@@ -299,6 +468,12 @@ class VinderApp:
     def __init__(self, master: tb.Window):
         self.master = master
         self.master.title("Vinder")
+
+        # Logs de arranque (clave para diagnosticar updates)
+        logger.info(f"[BOOT] frozen={getattr(sys, 'frozen', False)}")
+        logger.info(f"[BOOT] sys.executable={sys.executable}")
+        logger.info(f"[BOOT] install_dir={app_install_dir()}")
+        logger.info(f"[BOOT] cache_dir={tuf_cache_dir()}")
 
         # ====== logo / icon ======
         self.logo_photo_small = None
@@ -364,6 +539,52 @@ class VinderApp:
         self._build_menubar()
 
         self.mostrar_ventana_inicio()
+
+    def _clear_saved_session(self):
+        s = load_settings()
+        s.pop("session", None)
+        save_settings(s)
+
+    def _save_session(self, username: str, token: str, client_id: str):
+        s = load_settings()
+        s["session"] = {
+            "username": username,
+            "token": token,
+            "client_id": client_id,
+        }
+        save_settings(s)
+
+    def _try_restore_session(self, only_username: str = "EJGANADERIA") -> bool:
+        s = load_settings()
+        sess = s.get("session") or {}
+        token = (sess.get("token") or "").strip()
+        username = (sess.get("username") or "").strip()
+        client_id = (sess.get("client_id") or "").strip()
+
+        if not token or not username or not client_id:
+            return False
+
+        # Para que SOLO aplique a EJ:
+        if only_username and username.upper() != only_username.upper():
+            return False
+
+        try:
+            resp = self._req("GET", "/me", headers={"Authorization": f"Bearer {token}"}, timeout=12)
+            if resp.status_code != 200:
+                self._clear_saved_session()
+                return False
+
+            data = self._safe_json(resp) or {}
+            self.usuario_actual = (data.get("username") or username).strip()
+            self.auth_token = token
+            self.client_id = (data.get("client_id") or client_id).strip()
+
+            self.apply_client(self.client_id)
+            self.ventana_principal()
+            return True
+        except Exception:
+            self._clear_saved_session()
+            return False
 
     # ----------------------------
     # HTTP robusto
@@ -519,7 +740,7 @@ class VinderApp:
                     # deja vin actual y el resto como pendientes
                     still.append(vin)
                     idx = pending.index(vin)
-                    still.extend(pending[idx + 1 :])
+                    still.extend(pending[idx + 1:])
                     break
 
                 if resp.status_code == 200:
@@ -536,7 +757,6 @@ class VinderApp:
             self._refresh_sync_button()
             if show_ui:
                 messagebox.showinfo("Sincronizar", f"Sincronizados: {ok}\nPendientes: {len(still)}")
-            # status bar
             if len(still) > 0:
                 self.status_var.set(f"Sincronización completa. Pendientes: {len(still)}")
             else:
@@ -558,15 +778,11 @@ class VinderApp:
     # ----------------------------
     def _toast(self, msg: str, bootstyle="info"):
         self.status_var.set(msg)
-        if ToastNotification is None:
+        tn = globals().get("ToastNotification", None)
+        if tn is None:
             return
         try:
-            ToastNotification(
-                title="Vinder",
-                message=msg,
-                duration=2000,
-                bootstyle=bootstyle,
-            ).show_toast()
+            tn(title="Vinder", message=msg, duration=2000, bootstyle=bootstyle).show_toast()
         except Exception:
             pass
 
@@ -594,8 +810,15 @@ class VinderApp:
         menu_help = tb.Menu(menubar, tearoff=0)
         menu_help.add_command(label="Acerca de…", command=self._about_dialog)
         menubar.add_cascade(label="Ayuda", menu=menu_help)
-
+        menubar.add_command(label="Cerrar sesión", command=self._logout_from_menubar)
         self.master.config(menu=menubar)
+
+    def _logout_from_menubar(self):
+        if not self.usuario_actual:
+            messagebox.showinfo("Vinder", "No hay sesión activa.")
+            return
+        if messagebox.askyesno("Cerrar sesión", "¿Quieres cerrar sesión?"):
+            self.cerrar_sesion()
 
     def _set_theme(self, theme: str):
         try:
@@ -654,7 +877,7 @@ class VinderApp:
         logger.info(f"[CLIENT] Cliente activo: {self.client_id} ({cfg.get('display_name')})")
 
     # ----------------------------
-    # ACTUALIZACIONES (TUFUP CLIENT)
+    # ACTUALIZACIONES (TUFUP CLIENT) + fallback lock Windows
     # ----------------------------
     def check_for_updates(self):
         progress_window = tb.Toplevel(self.master)
@@ -673,15 +896,44 @@ class VinderApp:
 
         def worker():
             try:
-                client = make_tufup_client()
-                info = client.check_for_updates()
+                chosen = None  # (client, info, source_name)
+                last_err = None
+
+                for src in UPDATE_SOURCES:
+                    try:
+                        client = make_tufup_client(src["metadata"], src["target"])
+                        info = client.check_for_updates()
+                        logger.info(f"[UPDATER] source={src['name']} check_for_updates => {info!r}")
+
+                        has_update = info is not None and info is not False
+                        if isinstance(info, dict):
+                            has_update = bool(info.get("available", info.get("new_version") or info.get("target_path")))
+                        elif isinstance(info, str):
+                            has_update = True
+
+                        if has_update:
+                            chosen = (client, info, src["name"])
+                            break
+
+                    except Exception as e:
+                        last_err = e
+                        logger.warning(f"[UPDATER] source={src['name']} failed: {e}")
+
+                if chosen is None:
+                    if last_err:
+                        raise last_err
+                    info = None
+                    client = None
+                else:
+                    client, info, source_name = chosen
+                    logger.info(f"[UPDATER] Using source={source_name}")
+
                 logger.info(f"[UPDATER] check_for_updates() => {info!r}")
 
                 has_update = info is not None and info is not False
                 target_path = None
                 new_version = None
 
-                # tolerante a distintas versiones de tufup
                 if hasattr(info, "target_path"):
                     target_path = getattr(info, "target_path", None)
                 if hasattr(info, "new_version"):
@@ -729,7 +981,6 @@ class VinderApp:
 
                     def do_apply():
                         try:
-                            # distintas firmas
                             try:
                                 client.download_and_apply_update(info)
                             except TypeError:
@@ -737,8 +988,62 @@ class VinderApp:
 
                             self.master.after(0, bar2.stop)
                             self.master.after(0, pw2.destroy)
-                            self.master.after(0, lambda: messagebox.showinfo("Actualización", "Actualización aplicada.\n\nCierra y vuelve a abrir la aplicación."))
+                            self.master.after(0, lambda: messagebox.showinfo(
+                                "Actualización",
+                                "Actualización aplicada.\n\nCierra y vuelve a abrir la aplicación."
+                            ))
+
                         except Exception as e:
+                            err_msg = str(e)
+
+                            # ✅ fallback SOLO en producción Windows + frozen
+                            is_lock_error = ("WinError 32" in err_msg) or ("0x00000020" in err_msg) or ("siendo utilizado por otro proceso" in err_msg)
+                            if is_lock_error and getattr(sys, "frozen", False) and _is_windows():
+                                try:
+                                    extract_dir = os.path.join(tuf_cache_dir(), "extract")
+                                    if not os.path.isdir(extract_dir):
+                                        raise RuntimeError(f"No encuentro extract_dir: {extract_dir}")
+
+                                    install_dir = os.path.dirname(sys.executable)
+                                    exe_path = sys.executable
+                                    pid = os.getpid()
+
+                                    schedule_windows_apply_after_exit(extract_dir, install_dir, exe_path, pid)
+
+                                    def shutdown_now():
+                                        try:
+                                            messagebox.showinfo(
+                                                "Actualización",
+                                                "Para terminar de instalar necesito cerrar la app.\n"
+                                                "Se reiniciará automáticamente en unos segundos."
+                                            )
+                                        except Exception:
+                                            pass
+                                        try:
+                                            self.master.destroy()
+                                        except Exception:
+                                            pass
+                                        try:
+                                            logging.shutdown()
+                                        except Exception:
+                                            pass
+                                        os._exit(0)  # salida dura: suelta .exe y DLLs
+
+                                    self.master.after(0, bar2.stop)
+                                    self.master.after(0, pw2.destroy)
+                                    self.master.after(0, shutdown_now)
+                                    return
+
+                                except Exception as ee:
+                                    self.master.after(0, bar2.stop)
+                                    self.master.after(0, pw2.destroy)
+                                    self.master.after(0, lambda: messagebox.showerror(
+                                        "Error",
+                                        f"No se pudo programar la instalación tras cerrar:\n{ee}"
+                                    ))
+                                    return
+
+                            # error normal
                             self.master.after(0, bar2.stop)
                             self.master.after(0, pw2.destroy)
                             self.master.after(0, lambda: messagebox.showerror("Error", f"Error aplicando actualización: {e}"))
@@ -819,8 +1124,6 @@ class VinderApp:
 
     # ----------------------------
     # TRANSFERENCIA (flujo producción)
-    # - /transfer/create-order devuelve 200/201 con order + payment
-    # - opcional: submit tracking_key (/transfer/submit)
     # ----------------------------
     def iniciar_transferencia(self):
         if not self.auth_token:
@@ -913,9 +1216,12 @@ class VinderApp:
         frm = tb.Frame(w, padding=(12, 0))
         frm.pack(fill="x", pady=(0, 10))
 
-        tb.Button(frm, text="Copiar CLABE", bootstyle="secondary", command=lambda: self._copy_to_clipboard(clabe)).pack(side="left", padx=5)
-        tb.Button(frm, text="Copiar Monto", bootstyle="secondary", command=lambda: self._copy_to_clipboard(amount_mxn)).pack(side="left", padx=5)
-        tb.Button(frm, text="Copiar Referencia", bootstyle="secondary", command=lambda: self._copy_to_clipboard(concept or reference)).pack(side="left", padx=5)
+        tb.Button(frm, text="Copiar CLABE", bootstyle="secondary",
+                  command=lambda: self._copy_to_clipboard(clabe)).pack(side="left", padx=5)
+        tb.Button(frm, text="Copiar Monto", bootstyle="secondary",
+                  command=lambda: self._copy_to_clipboard(amount_mxn)).pack(side="left", padx=5)
+        tb.Button(frm, text="Copiar Referencia", bootstyle="secondary",
+                  command=lambda: self._copy_to_clipboard(concept or reference)).pack(side="left", padx=5)
 
         submit_box = tb.Labelframe(w, text="Enviar clave de rastreo (opcional)", padding=12, bootstyle="info")
         submit_box.pack(fill="x", padx=12, pady=(0, 12))
@@ -962,7 +1268,8 @@ class VinderApp:
             return False
 
         try:
-            resp = self._req("POST", "/guardar_vin", headers=self.auth_headers(), json_body={"vin_completo": vin_completo}, timeout=20)
+            resp = self._req("POST", "/guardar_vin", headers=self.auth_headers(),
+                             json_body={"vin_completo": vin_completo}, timeout=20)
             if self._handle_unauthorized(resp):
                 return False
             if resp.status_code == 200:
@@ -1001,7 +1308,8 @@ class VinderApp:
             return 0
 
         try:
-            resp = self._req("POST", "/obtener_secuencial", headers=self.auth_headers(), json_body={"year": year_code}, timeout=20)
+            resp = self._req("POST", "/obtener_secuencial", headers=self.auth_headers(),
+                             json_body={"year": year_code}, timeout=20)
             if self._handle_unauthorized(resp):
                 return 0
             if resp.status_code == 200:
@@ -1128,8 +1436,7 @@ class VinderApp:
         card_right.grid(row=0, column=1, padx=10, pady=10, sticky="n")
 
         tb.Label(card_right, text=f"Versión: {APP_VERSION}").pack(anchor="w")
-        tb.Label(card_right, text=f"API: {API_BASE}").pack(anchor="w")
-        tb.Label(card_right, text=f"Clientes: {len(self.clients)}").pack(anchor="w")
+        tb.Label(card_right, text=f"Cerrar la app después de presionar el botón actualizar para que se aplique correctamente").pack(anchor="w")
         tb.Label(card_right, text=f"Pendientes (local): {self.pending_vins_count()}").pack(anchor="w")
 
         tb.Button(card_right, text="Buscar actualizaciones", bootstyle="secondary", command=self.check_for_updates).pack(
@@ -1140,6 +1447,9 @@ class VinderApp:
         statusbar.grid(row=1, column=0, sticky="ew")
         statusbar.columnconfigure(0, weight=1)
         tb.Label(statusbar, textvariable=self.status_var, bootstyle="secondary").grid(row=0, column=0, sticky="w")
+
+        # ✅ Intentar restaurar sesión automáticamente SOLO para EJ
+        self.master.after(150, lambda: self._try_restore_session("EJGANADERIA"))
 
     def ventana_crear_cuenta(self):
         self.limpiar_main_frame()
@@ -1245,6 +1555,8 @@ class VinderApp:
                 self.usuario_actual = user
                 self.auth_token = token
                 self.client_id = client_id
+                # ✅ Guardar sesión para auto-entrar después
+                self._save_session(user, token, client_id)
 
                 try:
                     self.apply_client(client_id)
@@ -1337,7 +1649,7 @@ class VinderApp:
 
         tb.Button(
             card_result,
-            text="Ver detalle Pos.9",
+            text="Ver con detalle Pos.9",
             bootstyle="outline-secondary",
             command=self._ver_detalle_pos9,
         ).grid(row=2, column=0, sticky="ew", pady=(8, 0))
@@ -1345,7 +1657,7 @@ class VinderApp:
         self.btn_generate = tb.Button(card_actions, text="Generar VIN", bootstyle="primary", command=self.generar_vin_async)
         self.btn_generate.pack(fill="x", pady=(0, 10))
 
-        # ✅ NUEVO: Sync pendientes (si falla el guardado, aquí lo arreglas)
+        # ✅ Sync pendientes
         self.btn_sync = tb.Button(
             card_actions,
             text=f"Sincronizar VINs pendientes ({self.pending_vins_count()})",
@@ -1355,22 +1667,38 @@ class VinderApp:
         self.btn_sync.pack(fill="x", pady=4)
 
         if PAYMENT_MODE in ("stripe", "both"):
-            tb.Button(card_actions, text="Renovar Licencia (Tarjeta)", bootstyle="success", command=self.iniciar_pago_stripe).pack(fill="x", pady=4)
+            tb.Button(card_actions, text="Renovar Licencia (Tarjeta)", bootstyle="success",
+                      command=self.iniciar_pago_stripe).pack(fill="x", pady=4)
         if PAYMENT_MODE in ("transfer", "both"):
-            tb.Button(card_actions, text="Pagar por Transferencia", bootstyle="success", command=self.iniciar_transferencia).pack(fill="x", pady=4)
+            tb.Button(card_actions, text="Pagar por Transferencia", bootstyle="success",
+                      command=self.iniciar_transferencia).pack(fill="x", pady=4)
 
-        tb.Button(card_actions, text="Ver VINs Generados", bootstyle="info", command=self.ventana_lista_vins).pack(fill="x", pady=4)
-        tb.Button(card_actions, text="Exportar VINs a Excel", bootstyle="info", command=self.exportar_vins).pack(fill="x", pady=4)
-
-        tb.Separator(card_actions).pack(fill="x", pady=10)
-
-        tb.Button(card_actions, text="Eliminar TODOS los VINs", bootstyle="warning", command=self.eliminar_todos_vins).pack(fill="x", pady=4)
-        tb.Button(card_actions, text="Eliminar ÚLTIMO VIN", bootstyle="warning", command=self.eliminar_ultimo_vin).pack(fill="x", pady=4)
+        tb.Button(card_actions, text="Ver VINs Generados", bootstyle="info",
+                  command=self.ventana_lista_vins).pack(fill="x", pady=4)
+        tb.Button(card_actions, text="Exportar VINs a Excel", bootstyle="info",
+                  command=self.exportar_vins).pack(fill="x", pady=4)
 
         tb.Separator(card_actions).pack(fill="x", pady=10)
 
-        tb.Button(card_actions, text="Buscar actualizaciones", bootstyle="secondary", command=self.check_for_updates).pack(fill="x", pady=4)
-        tb.Button(card_actions, text="Cerrar Sesión", bootstyle="danger", command=self.cerrar_sesion).pack(fill="x", pady=(10, 0))
+        tb.Button(card_actions, text="Eliminar TODOS los VINs", bootstyle="warning",
+                  command=self.eliminar_todos_vins).pack(fill="x", pady=4)
+        tb.Button(card_actions, text="Eliminar ÚLTIMO VIN", bootstyle="warning",
+                  command=self.eliminar_ultimo_vin).pack(fill="x", pady=4)
+
+        tb.Separator(card_actions).pack(fill="x", pady=10)
+
+        # Footer fijo abajo
+        actions_footer = tb.Frame(card_actions)
+        actions_footer.pack(side="bottom", fill="x")
+
+        tb.Button(
+            actions_footer,
+            text="Buscar actualizaciones",
+            bootstyle="secondary",
+            command=self.check_for_updates
+        ).pack(fill="x", pady=(0, 8), ipady=6)
+
+
 
         statusbar = tb.Frame(self.main_frame, padding=(PAD, 8))
         statusbar.grid(row=2, column=0, sticky="ew")
@@ -1487,16 +1815,12 @@ class VinderApp:
                 pos9 = self.calcular_posicion_9(valores_sin_pos9)
                 vin_completo = f"{wmi}{c4}{c5}{c6}{c7}{c8}{pos9}{c10}{c11}{fixed_12_14}{sec_str}"
 
-                # siempre muestra el VIN generado en UI
                 self.master.after(0, lambda: self.vin_var.set(vin_completo))
 
                 saved = self.guardar_vin_en_flask(vin_completo, show_ui=False)
 
                 if not saved:
-                    # ✅ NUEVO: no se pierde
                     self._queue_pending_vin(vin_completo)
-
-                    # copia al portapapeles (UI thread)
                     self.master.after(0, lambda: self._copy_to_clipboard(vin_completo))
 
                     def warn():
@@ -1513,7 +1837,6 @@ class VinderApp:
                     self.master.after(0, warn)
                     return
 
-                # si guardó ok
                 def ok_ui():
                     self._refresh_sync_button()
                     self.status_var.set("VIN generado y guardado.")
@@ -1601,13 +1924,19 @@ class VinderApp:
         btn_frame = tb.Frame(vins_window, padding=12)
         btn_frame.pack(fill="x")
 
-        tb.Button(btn_frame, text="Sincronizar pendientes", bootstyle="info", command=lambda: self.sync_pending_vins_async(show_ui=True)).pack(side="left", padx=5)
-        tb.Button(btn_frame, text="Exportar Excel", bootstyle="info", command=self.exportar_vins).pack(side="left", padx=5)
-        tb.Button(btn_frame, text="Eliminar TODOS", bootstyle="danger", command=self.eliminar_todos_vins).pack(side="left", padx=5)
-        tb.Button(btn_frame, text="Eliminar ÚLTIMO", bootstyle="danger", command=self.eliminar_ultimo_vin).pack(side="left", padx=5)
-        tb.Button(btn_frame, text="Cerrar", bootstyle="secondary", command=vins_window.destroy).pack(side="right", padx=5)
+        tb.Button(btn_frame, text="Sincronizar pendientes", bootstyle="info",
+                  command=lambda: self.sync_pending_vins_async(show_ui=True)).pack(side="left", padx=5)
+        tb.Button(btn_frame, text="Exportar Excel", bootstyle="info",
+                  command=self.exportar_vins).pack(side="left", padx=5)
+        tb.Button(btn_frame, text="Eliminar TODOS", bootstyle="danger",
+                  command=self.eliminar_todos_vins).pack(side="left", padx=5)
+        tb.Button(btn_frame, text="Eliminar ÚLTIMO", bootstyle="danger",
+                  command=self.eliminar_ultimo_vin).pack(side="left", padx=5)
+        tb.Button(btn_frame, text="Cerrar", bootstyle="secondary",
+                  command=vins_window.destroy).pack(side="right", padx=5)
 
     def cerrar_sesion(self):
+        self._clear_saved_session()
         self.usuario_actual = None
         self.auth_token = None
         self.client_id = None
