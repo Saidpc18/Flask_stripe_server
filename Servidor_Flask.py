@@ -450,6 +450,32 @@ def add_security_headers(resp):
         pass
     return resp
 
+
+def _clients_dir() -> str:
+    # En Railway: permite override por env, si no usa ./clients junto al server
+    return os.getenv("VINDER_CLIENTS_DIR", os.path.join(os.path.dirname(__file__), "clients"))
+
+def _load_client_catalogs(client_id: str) -> dict:
+    path = os.path.join(_clients_dir(), f"{client_id}.json")
+    if not os.path.exists(path):
+        logger.warning(f"[EXPORT] No existe catálogo: {path}")
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"[EXPORT] No pude leer catálogo {path}: {e}")
+        return {}
+
+def _reverse_catalog(cat: dict) -> dict:
+    # cat: { "Etiqueta": "Codigo" } => rev: { "Codigo": "Etiqueta" }
+    rev = {}
+    for k, v in (cat or {}).items():
+        if v not in rev:
+            rev[v] = k
+    return rev
+
+
 # ============================
 # ROUTES
 # ============================
@@ -646,9 +672,36 @@ def export_vins():
     user = request.current_user
     try:
         vins = VIN.query.filter_by(user_id=user.id).order_by(VIN.created_at.desc()).all()
-        data = [{"VIN": v.vin_completo, "Fecha de Creación": v.created_at.strftime("%Y-%m-%d %H:%M:%S")} for v in vins]
 
-        df = pd.DataFrame(data)
+        # Carga catálogos para detalles (si existen en el server)
+        cfg = _load_client_catalogs(user.client_id) or {}
+        catalogs = (cfg.get("catalogs") or {}) if isinstance(cfg, dict) else {}
+        rev_p4 = _reverse_catalog(catalogs.get("posicion_4"))
+        rev_p6 = _reverse_catalog(catalogs.get("posicion_6"))
+
+        rows = []
+        for v in vins:
+            vin = (v.vin_completo or "").strip().upper()
+
+            # Posiciones (1-index): pos4=vin[3], pos6=vin[5]
+            pos4 = vin[3] if len(vin) >= 4 else ""
+            pos6 = vin[5] if len(vin) >= 6 else ""
+
+            rows.append({
+                "VIN": vin,
+                "Fecha de Creación": v.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "Pos4 (código)": pos4,
+                "Pos4 (detalle)": rev_p4.get(pos4, ""),
+                "Pos6 (código)": pos6,
+                "Pos6 (detalle)": rev_p6.get(pos6, ""),
+            })
+
+        df = pd.DataFrame(rows, columns=[
+            "VIN", "Fecha de Creación",
+            "Pos4 (código)", "Pos4 (detalle)",
+            "Pos6 (código)", "Pos6 (detalle)",
+        ])
+
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             df.to_excel(writer, index=False, sheet_name="VINs")
@@ -663,7 +716,6 @@ def export_vins():
     except Exception as e:
         logger.error(f"Error al exportar VINs: {e}")
         return jsonify({"error": str(e)}), 500
-
 @app.route("/eliminar_todos_vins", methods=["POST"])
 @require_auth
 def eliminar_todos_vins():
