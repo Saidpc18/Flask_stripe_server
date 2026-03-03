@@ -42,7 +42,7 @@ from PIL import Image, ImageTk
 # CONFIG (APP)
 # ============================
 APP_NAME = "Vinder"
-APP_VERSION = "0.0.18"
+APP_VERSION = "0.0.19"
 
 # ============================
 # UTILIDADES DE RUTAS / RECURSOS
