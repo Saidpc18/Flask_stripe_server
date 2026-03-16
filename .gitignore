@@ -55,7 +55,9 @@ count_*.py
 add_unique_vin.py
 
 # --- Client packaging stuff (NO en servidor) ---
-clients/
+# NO ignores catalogs needed in production
+!clients/
+!clients/*.json
 PACKAGE_*/
 Vinder-updates/
 root.json
