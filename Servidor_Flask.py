@@ -673,17 +673,31 @@ def export_vins():
     try:
         vins = VIN.query.filter_by(user_id=user.id).order_by(VIN.created_at.desc()).all()
 
-        # Carga catálogos del cliente (detalle -> código)
-        cfg = _load_client_catalogs(user.client_id) or {}
-        catalogs = (cfg.get("catalogs") or {}) if isinstance(cfg, dict) else {}
+        cid = (user.client_id or "").strip()
+        base = os.path.join(os.path.dirname(__file__), "clients")
 
+        cfg = {}
+        for cand in [
+            cid,
+            cid.lower(),
+            cid.upper(),
+            cid.replace("-", "_"),
+            cid.replace("_", "-"),
+            cid.replace("_", ""),
+            "ej_ganaderia",  # fallback fuerte para EJ
+        ]:
+            fp = os.path.join(base, f"{cand}.json")
+            if os.path.exists(fp):
+                with open(fp, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                break
+
+        catalogs = (cfg.get("catalogs") or {}) if isinstance(cfg, dict) else {}
         cat4 = catalogs.get("posicion_4") or {}
         cat6 = catalogs.get("posicion_6") or {}
 
-        # Invertir: detalle->código  ==>  código->detalle
         rev_p4 = {str(v).strip().upper(): str(k) for k, v in cat4.items()} if isinstance(cat4, dict) else {}
         rev_p6 = {str(v).strip().upper(): str(k) for k, v in cat6.items()} if isinstance(cat6, dict) else {}
-
         rows = []
         for v in vins:
             vin = (v.vin_completo or "").strip().upper()
