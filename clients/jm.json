@@ -1,0 +1,79 @@
+{
+  "client_id": "jm",
+  "display_name": "JM",
+  "defaults": {
+    "wmi": "3J9",
+    "fixed_12_14": "098"
+  },
+  "catalogs": {
+    "posicion_4": {
+      "JM Remolque Cama Baja Tapada": "M",
+      "JM Remolque Cama Baja Abierta": "L",
+      "JM Remolque Cama Alta plataforma": "K",
+      "JM Remolque Ganadero": "J",
+      "JM Remolque VOLTEO Cama Baja": "H",
+      "JM Remolque VOLTEO Cama Alta": "G",
+      "JM Remolque Cuello Ganzo Ganadero": "F",
+      "JM Remolque Cuello Ganzo Cama Baja": "E",
+      "JM Remolque Cuello Ganzo Cama Alta": "D",
+      "JM Semirremolque Tipo Gondola": "C",
+      "JM Semirremolque Tipo Jaula Ganadera": "B"
+    },
+    "posicion_5": {
+      "5' X 10' A 14' Pies": "1",
+      "5´ X 15´ A 20´Pies": "2",
+      "6´ X 10´ A  14´ Pies": "3",
+      "6´ X 15´ A  20´Pies": "4",
+      "7´ X 10´ A  15´  Pies": "5",
+      "7´ X 16´ A 21´ Pies": "6",
+      "7´ X 22´ A 27´ Pies": "7",
+      "8´ X 16´ A  21´ Pies": "8",
+      "8´ X 22´ A  27´ Pies": "9",
+      "8.5´ X 16´ A  21´ Pies": "A",
+      "8.5´ X 22´ A 27´ Pies": "B"
+    },
+    "posicion_6": {
+      "1 Eje, Rin 13, 5 birlos, 800, Suspensión de balancin": "A",
+      "1 Eje, Rin 15, 5 birlos, 1.500, Suspensión de balancin": "C",
+      "1 Eje, Rin 16, 8 birlos, 3.000, Suspensión de balancin": "E",
+      "2 Ejes, Rin 15, 5 birlos, 3.000, Suspensión de balancin": "F",
+      "2 Ejes, Rin 15, 8 birlos, 6.000, Suspensión de balancin": "H",
+      "2 Ejes, Rin 16, 8 birlos, 6.000, Suspensión de balancin": "K",
+      "3 Ejes, Rin 16, 8 birlos, 9.000, Suspensión de balancin": "N",
+      "2 Ejes, Rin 16, 8 birlos, Doble Rodada,10.000, Suspensión de balancin": "R",
+      "2 Ejes, rin 22.5, 10 birlos, 30.000, Suspensión de aire": "S",
+      "2 Ejes, rin 24.5, 10 birlos, 30.000, Suspensión de aire": "T",
+      "3 Ejes, rin 24.5, 10 birlos, 40.000, Suspensión de aire": "U",
+      "3 Ejes, rin 24.5, 24 m3, 30.000, Suspensión de aire": "V",
+      "3 Ejes, rin 24.5, 30 m3, 45.000, Suspensión de aire": "Z"
+    },
+    "posicion_7": {
+      "300 A 500": "9",
+      "501 A 700": "8",
+      "701 A 900": "7",
+      "901 A 1100": "6",
+      "1101 A 1300": "5",
+      "1301 A 1500": "4",
+      "1501 A 1700": "3",
+      "1701 A 1900": "2",
+      "1901 A 2100": "1",
+      "2101 A 2300": "A"
+    },
+    "posicion_8": {
+      "Sin Frenos": "9",
+      "Frenos de disco": "8",
+      "Frenos Electricos": "7",
+      "Frenos de Aire": "6"
+    },
+    "posicion_10": {
+      "2024": "R",
+      "2025": "S",
+      "2026": "T",
+      "2027": "V",
+      "2028": "W"
+    },
+    "posicion_11": {
+      "Ex Hacienda la Honda, Zacatecas, México": "A"
+    }
+  }
+}

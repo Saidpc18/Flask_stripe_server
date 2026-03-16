@@ -1,0 +1,88 @@
+{
+  "client_id": "ej_ganaderia",
+  "display_name": "EJ GANADERÍA",
+  "defaults": {
+    "wmi": "3J9",
+    "fixed_12_14": "083"
+  },
+  "catalogs": {
+    "posicion_4": {
+      "EJ RCB": "A",
+      "EJ RCBD": "B",
+      "EJ RCBT": "C",
+      "EJ RCBV": "D",
+      "EJ RCAV": "E",
+      "EJ RG": "F",
+      "EJ RGCG": "G",
+      "EJ RCBCG": "H",
+      "EJ RCACG": "J",
+      "EJ RP": "K",
+      "EJ RTD": "L",
+      "EJ RTCS": "M",
+      "EJ SRLB": "P",
+      "EJ SRJG": "R"
+    },
+    "posicion_5": {
+      "Z": "Z"
+    },
+    "posicion_6": {
+      "Remolque Cama Baja": "T",
+      "Remolque Cama Baja Destapado": "R",
+      "Remolque Cama Baja Tapado": "P",
+      "Remolque Cama Baja Volteo": "M",
+      "Remolque Cama Alta Volteo": "L",
+      "Remolque ganadero": "K",
+      "Remolque ganadero Cuello de Ganzo": "H",
+      "Remolque Cama Baja Cuello de Ganzo": "G",
+      "Remolque Cama Alta Cuello de Ganzo": "F",
+      "Remolque plataforma": "E",
+      "Remolque Tipo Caja Seca": "D",
+      "Remolque Tipo Dolly": "C",
+      "Semirremolque Tipo Low Boy": "B",
+      "Semirremolque Tipo Jaula Granelera": "A"
+    },
+    "posicion_7": {
+      "1 Eje, Rin 13, 5 birlos | Capacidad 800 kg | Peso Bruto 300-400 kg | Tipo de frenos: Electricos | Tipo de suspensión: Suspensión de balancin": "9",
+      "1 Eje, Rin 15, 5 birlos | Capacidad 1,500 kg | Peso Bruto 345-450 kg | Tipo de frenos: Electricos | Tipo de suspensión: Suspensión de balancin": "8",
+      "1 Eje, Rin 16, 8 birlos | Capacidad 3,000 kg | Peso Bruto 500-1000 kg | Tipo de frenos: Electricos | Tipo de suspensión: Suspensión de balancin": "7",
+      "2 Ejes, Rin 15, 5 birlos | Capacidad 3,000 kg | Peso Bruto 600-1200 kg | Tipo de frenos: Electricos | Tipo de suspensión: Suspensión de balancin": "6",
+      "2 Ejes, Rin 16, 8 birlos | Capacidad 6,000 kg | Peso Bruto 900-1900 kg | Tipo de frenos: Electricos | Tipo de suspensión: Suspensión de balancin": "5",
+      "2 Ejes, Rin 16, 8 birlos | Capacidad 10,000 kg | Peso Bruto 2500-3500 kg | Tipo de frenos: Electricos | Tipo de suspensión: Suspensión de balancin": "4",
+      "3 Ejes, rin 16, 8 birlos | Capacidad 9,000 kg | Peso Bruto 1800-3250 kg | Tipo de frenos: Electricos | Tipo de suspensión: Suspensión de balancin": "3",
+      "2 Ejes, rin 22.5 | Capacidad 30,000 kg | Peso Bruto 6300-6700 kg | Tipo de frenos: Aire | Tipo de suspensión: Suspensión de aire": "2",
+      "2 Ejes, rin 24.5 | Capacidad 30,000 kg | Peso Bruto 6500-8500 kg | Tipo de frenos: Aire | Tipo de suspensión: Suspensión de aire": "1",
+      "3 Ejes, rin 24.5 | Capacidad 40,000 kg | Peso Bruto 6500-8500 kg | Tipo de frenos: Aire | Tipo de suspensión: Suspensión de aire": "A",
+      "3 Ejes, rin 24.5, 24 m3 | Capacidad 30,000 kg | Peso Bruto 6500-8500 kg | Tipo de frenos: Aire | Tipo de suspensión: Suspensión de aire": "B",
+      "3 Ejes, rin 24.5, 30 m3 | Capacidad 45,000 kg | Peso Bruto 6500-8500 kg | Tipo de frenos: Aire | Tipo de suspensión: Suspensión de aire": "C"
+    },
+    "posicion_8": {
+      "4'X6'a 12'": "P",
+      "5'X6'a 12'": "R",
+      "5'X10'a 16'": "S",
+      "5'X12'a 20'": "T",
+      "6'X10'a 20'": "U",
+      "6'X14'a 32'": "Y",
+      "6.5'X10'a 20'": "A",
+      "6.5'X16'a 36'": "1",
+      "7'X3'a 8'": "2",
+      "7'X10'a 20'": "3",
+      "7'X18'a 36'": "4",
+      "8'X14'a 24'": "5",
+      "8'X24'a 36'": "6",
+      "8'X24'a 54'": "7",
+      "8.5'X24'a 36'": "8",
+      "8.5'X24'a 54'": "9"
+    },
+    "posicion_10": {
+      "2025": "S",
+      "2026": "T",
+      "2027": "V",
+      "2028": "W",
+      "2029": "X"
+    },
+    "posicion_11": {
+      "Ex Hacienda la Honda, Miguel Auza, Zacatecas, México": "M"
+    }
+  }
+}
+
