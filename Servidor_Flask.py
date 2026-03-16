@@ -10,6 +10,7 @@ import io
 import logging
 import secrets
 import string
+import json
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Optional
@@ -671,13 +672,21 @@ def ver_vins():
 def export_vins():
     user = request.current_user
     try:
+        import os
+        import json
+        import io
+        import pandas as pd
+
         vins = VIN.query.filter_by(user_id=user.id).order_by(VIN.created_at.desc()).all()
 
-        cid = (user.client_id or "").strip()
+        # ===== Cargar JSON del cliente desde ./clients/*.json (con fallbacks) =====
+        cid = (getattr(user, "client_id", "") or "").strip()
         base = os.path.join(os.path.dirname(__file__), "clients")
 
         cfg = {}
-        for cand in [
+        chosen_file = None
+
+        candidates = [
             cid,
             cid.lower(),
             cid.upper(),
@@ -685,9 +694,14 @@ def export_vins():
             cid.replace("_", "-"),
             cid.replace("_", ""),
             "ej_ganaderia",  # fallback fuerte para EJ
-        ]:
+        ]
+
+        for cand in candidates:
+            if not cand:
+                continue
             fp = os.path.join(base, f"{cand}.json")
             if os.path.exists(fp):
+                chosen_file = fp
                 with open(fp, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
                 break
@@ -696,13 +710,44 @@ def export_vins():
         cat4 = catalogs.get("posicion_4") or {}
         cat6 = catalogs.get("posicion_6") or {}
 
-        rev_p4 = {str(v).strip().upper(): str(k) for k, v in cat4.items()} if isinstance(cat4, dict) else {}
-        rev_p6 = {str(v).strip().upper(): str(k) for k, v in cat6.items()} if isinstance(cat6, dict) else {}
+        # ===== Detectar si el catálogo viene DETALLE->CÓDIGO o CÓDIGO->DETALLE
+        # y devolver SIEMPRE {CODIGO: DETALLE} =====
+        def _code_to_detail(cat: dict) -> dict:
+            if not isinstance(cat, dict) or not cat:
+                return {}
+
+            items = list(cat.items())[:10]
+
+            def looks_like_code(x):
+                s = str(x).strip()
+                # Códigos típicos: "A", "H", "1", "AA" (cortos y uppercase)
+                return 1 <= len(s) <= 3 and s.upper() == s and s.replace("-", "").isalnum()
+
+            key_code_score = sum(looks_like_code(k) for k, _ in items)
+            val_code_score = sum(looks_like_code(v) for _, v in items)
+
+            # Si las llaves parecen código => ya es CODIGO->DETALLE
+            if key_code_score >= val_code_score:
+                return {str(k).strip().upper(): str(v) for k, v in cat.items()}
+
+            # Si los valores parecen código => es DETALLE->CODIGO => invertimos
+            return {str(v).strip().upper(): str(k) for k, v in cat.items()}
+
+        map4 = _code_to_detail(cat4)
+        map6 = _code_to_detail(cat6)
+
+        # ===== LOGS para Railway (te dicen si cargó bien) =====
+        logger.info(f"[export_vins] client_id={cid} chosen_file={chosen_file}")
+        logger.info(f"[export_vins] cat4_len={len(cat4) if isinstance(cat4, dict) else 'NA'} map4_len={len(map4)}")
+        logger.info(f"[export_vins] cat6_len={len(cat6) if isinstance(cat6, dict) else 'NA'} map6_len={len(map6)}")
+        logger.info(f"[export_vins] map6_has_A={'A' in map6} map6_has_H={'H' in map6}")
+
+        # ===== Armar filas =====
         rows = []
         for v in vins:
             vin = (v.vin_completo or "").strip().upper()
 
-            # Posiciones (1-index): pos4 = 4to char => vin[3], pos6 = 6to char => vin[5]
+            # Posiciones (1-index): pos4=vin[3], pos6=vin[5]
             pos4 = vin[3] if len(vin) >= 4 else ""
             pos6 = vin[5] if len(vin) >= 6 else ""
 
@@ -710,9 +755,9 @@ def export_vins():
                 "VIN": vin,
                 "Fecha de Creación": v.created_at.strftime("%Y-%m-%d %H:%M:%S"),
                 "Pos4 (código)": pos4,
-                "Pos4 (detalle)": rev_p4.get(pos4, ""),
+                "Pos4 (detalle)": map4.get(pos4, ""),
                 "Pos6 (código)": pos6,
-                "Pos6 (detalle)": rev_p6.get(pos6, ""),
+                "Pos6 (detalle)": map6.get(pos6, ""),
             })
 
         df = pd.DataFrame(rows, columns=[
@@ -734,7 +779,7 @@ def export_vins():
         )
 
     except Exception as e:
-        logger.error(f"Error al exportar VINs: {e}")
+        logger.error(f"Error al exportar VINs: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 @app.route("/eliminar_todos_vins", methods=["POST"])
 @require_auth
