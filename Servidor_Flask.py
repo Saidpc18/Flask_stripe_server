@@ -673,17 +673,22 @@ def export_vins():
     try:
         vins = VIN.query.filter_by(user_id=user.id).order_by(VIN.created_at.desc()).all()
 
-        # Carga catálogos para detalles (si existen en el server)
+        # Carga catálogos del cliente (detalle -> código)
         cfg = _load_client_catalogs(user.client_id) or {}
         catalogs = (cfg.get("catalogs") or {}) if isinstance(cfg, dict) else {}
-        rev_p4 = _reverse_catalog(catalogs.get("posicion_4"))
-        rev_p6 = _reverse_catalog(catalogs.get("posicion_6"))
+
+        cat4 = catalogs.get("posicion_4") or {}
+        cat6 = catalogs.get("posicion_6") or {}
+
+        # Invertir: detalle->código  ==>  código->detalle
+        rev_p4 = {str(v).strip().upper(): str(k) for k, v in cat4.items()} if isinstance(cat4, dict) else {}
+        rev_p6 = {str(v).strip().upper(): str(k) for k, v in cat6.items()} if isinstance(cat6, dict) else {}
 
         rows = []
         for v in vins:
             vin = (v.vin_completo or "").strip().upper()
 
-            # Posiciones (1-index): pos4=vin[3], pos6=vin[5]
+            # Posiciones (1-index): pos4 = 4to char => vin[3], pos6 = 6to char => vin[5]
             pos4 = vin[3] if len(vin) >= 4 else ""
             pos6 = vin[5] if len(vin) >= 6 else ""
 
@@ -713,6 +718,7 @@ def export_vins():
             download_name="vins.xlsx",
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
     except Exception as e:
         logger.error(f"Error al exportar VINs: {e}")
         return jsonify({"error": str(e)}), 500
